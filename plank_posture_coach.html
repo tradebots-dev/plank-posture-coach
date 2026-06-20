@@ -15,32 +15,23 @@
     align-items: center;
     padding: 16px;
   }
-  h1 { font-size: 20px; margin: 8px 0 12px; }
-  #exerciseTabs {
-    display: flex;
-    gap: 8px;
+  h1 { font-size: 20px; margin: 8px 0 6px; }
+  #detectedLabel {
     width: 100%;
     max-width: 720px;
-    overflow-x: auto;
-    padding-bottom: 4px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 10px 0;
     margin-bottom: 10px;
-  }
-  #exerciseTabs button {
-    margin-top: 0;
-    flex: 0 0 auto;
+    border-radius: 8px;
     background: #1c1c1c;
-    color: #ccc;
-    border: 1px solid #333;
-    padding: 8px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    white-space: nowrap;
+    color: #888;
+    transition: background 0.2s ease, color 0.2s ease;
   }
-  #exerciseTabs button.active {
-    background: #3a73e0;
-    color: white;
-    border-color: #3a73e0;
-  }
+  #detectedLabel.locked { color: #fff; background: #2a3f6b; }
   #stage {
     position: relative;
     width: 100%;
@@ -90,28 +81,7 @@
   button:disabled { background: #444; cursor: not-allowed; }
   #controls { display: flex; gap: 10px; width: 100%; max-width: 720px; flex-wrap: wrap; align-items: center; }
   #controls a { text-decoration: none; }
-  #audioToggleLabel { font-size: 13px; color: var(--text, #eee); display: flex; align-items: center; gap: 6px; margin-left: 4px; }
-  #howItWorks {
-    width: 100%;
-    max-width: 720px;
-    font-size: 13px;
-    line-height: 1.5;
-    opacity: 0.85;
-    margin: 0 0 12px;
-  }
-  #telegramSection { width: 100%; max-width: 720px; margin-top: 24px; }
-  #telegramSection h2 { font-size: 16px; margin-bottom: 6px; }
-  #telegramSection .hint { font-size: 12px; opacity: 0.65; margin: 4px 0 10px; line-height: 1.4; }
-  #telegramSection .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  #telegramSection input {
-    flex: 1 1 160px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid #333;
-    background: #1c1c1c;
-    color: #eee;
-    font-size: 13px;
-  }
+  #audioToggleLabel { font-size: 13px; color: #eee; display: flex; align-items: center; gap: 6px; margin-left: 4px; }
   #logSection { width: 100%; max-width: 720px; margin-top: 24px; }
   #logSection h2 { font-size: 16px; margin-bottom: 8px; }
   #logTable { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -120,24 +90,20 @@
 
   @media (max-width: 600px) {
     h1 { font-size: 26px; }
-    #exerciseTabs button { font-size: 15px; padding: 10px 16px; }
-    #howItWorks { font-size: 16px; }
+    #detectedLabel { font-size: 26px; padding: 14px 0; }
     #status { font-size: 24px; }
     #tip { font-size: 17px; }
     #stats { font-size: 15px; }
     button { font-size: 17px; padding: 12px 18px; }
     #audioToggleLabel { font-size: 16px; }
-    #telegramSection .hint { font-size: 14px; }
-    #telegramSection input { font-size: 16px; padding: 12px; }
-    #telegramSection h2, #logSection h2 { font-size: 19px; }
+    #logSection h2 { font-size: 19px; }
     #logTable { font-size: 14px; }
   }
 </style>
 </head>
 <body>
   <h1>Posture Coach</h1>
-  <div id="exerciseTabs"></div>
-  <p id="howItWorks"></p>
+  <div id="detectedLabel">DETECTING...</div>
   <div id="stage">
     <video id="video" playsinline autoplay muted></video>
     <canvas id="overlay"></canvas>
@@ -145,7 +111,7 @@
   <div id="spacer"></div>
   <div id="panel" class="neutral">
     <div id="status">Loading pose model...</div>
-    <div id="tip">Turn sideways to the camera so your shoulder, hip, and ankle are all visible.</div>
+    <div id="tip">Step into frame, sideways to the camera, and move into any exercise position.</div>
     <div id="stats"></div>
   </div>
   <div id="controls">
@@ -155,17 +121,6 @@
     <button id="exportBtn">Export CSV</button>
     <a id="dashboardLink" href="dashboard.html" target="_blank"><button type="button">View Dashboard</button></a>
     <label id="audioToggleLabel"><input type="checkbox" id="audioToggle" checked> Audio cues</label>
-  </div>
-  <div id="telegramSection">
-    <h2>Telegram Notifications</h2>
-    <p class="hint">Get a message with your session summary and a dashboard link sent to "Fitness by PAI" on Telegram after each session. Your token and chat ID are saved only in this browser, never uploaded anywhere.</p>
-    <div class="row">
-      <input id="telegramToken" type="text" placeholder="Bot token (from @BotFather)">
-      <input id="telegramChatId" type="text" placeholder="Chat ID">
-      <button id="saveTelegramBtn" type="button">Save</button>
-      <button id="testTelegramBtn" type="button">Send Test</button>
-    </div>
-    <div id="telegramStatus" class="hint"></div>
   </div>
   <div id="logSection">
     <h2>Daily Log</h2>
@@ -191,16 +146,11 @@ const switchCameraBtn = document.getElementById("switchCameraBtn");
 const exportBtn = document.getElementById("exportBtn");
 const audioToggle = document.getElementById("audioToggle");
 const logTableBody = document.querySelector("#logTable tbody");
-const tabsEl = document.getElementById("exerciseTabs");
-const howItWorksEl = document.getElementById("howItWorks");
-const telegramTokenInput = document.getElementById("telegramToken");
-const telegramChatIdInput = document.getElementById("telegramChatId");
-const saveTelegramBtn = document.getElementById("saveTelegramBtn");
-const testTelegramBtn = document.getElementById("testTelegramBtn");
-const telegramStatusEl = document.getElementById("telegramStatus");
+const detectedLabelEl = document.getElementById("detectedLabel");
 
 // ---------------------------------------------------------------------------
-// Exercise definitions. Two detector "types":
+// Exercise rule definitions (used for both auto-detection and form scoring).
+// Two detector "types":
 //  - "line": checks that three joints (near -> mid -> far) form a straight line
 //            while roughly horizontal. Used for static holds: Plank, Push-up,
 //            Side Plank, Glute Bridge.
@@ -215,11 +165,6 @@ const EXERCISES = [
     near: "shoulder", mid: "hip", far: "ankle",
     horizontalMax: 40,
     slopeThreshold: 0.045,
-    instructions:
-      'Stand <b>sideways</b> to the camera in your plank. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles form one straight line. ' +
-      '<b style="color:#ff8b8b">Hips sagging</b>: lower back dipping below that line &mdash; lift your hips. <b style="color:#ff8b8b">Hips too high</b>: piking up &mdash; lower your hips.',
-    notActiveStatus: "Get into plank position",
-    notActiveTip: "Body should be roughly horizontal, shoulder to ankle, viewed from the side.",
     goodStatus: "Good form — body is straight",
     goodMsg: "Keep your core braced and breathe steadily.",
     sagStatus: "Hips sagging",
@@ -236,11 +181,6 @@ const EXERCISES = [
     near: "shoulder", mid: "hip", far: "ankle",
     horizontalMax: 40,
     slopeThreshold: 0.05,
-    instructions:
-      'Side-view, hands under shoulders. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles stay in one straight line throughout the rep, like a moving plank. ' +
-      '<b style="color:#ff8b8b">Hips sagging</b> or <b style="color:#ff8b8b">piking</b> are the same corrections as a plank.',
-    notActiveStatus: "Get into push-up position",
-    notActiveTip: "Hands under shoulders, body roughly horizontal, viewed from the side.",
     goodStatus: "Good form — straight body line",
     goodMsg: "Great alignment — control the rep up and down.",
     sagStatus: "Hips sagging",
@@ -257,11 +197,6 @@ const EXERCISES = [
     near: "shoulder", mid: "hip", far: "ankle",
     horizontalMax: 40,
     slopeThreshold: 0.045,
-    instructions:
-      'Lie on your side, propped on your forearm, facing the camera. <b style="color:#7fdc9a">Good form</b>: shoulder, hip, and ankle form one straight diagonal line. ' +
-      '<b style="color:#ff8b8b">Sagging</b> or <b style="color:#ff8b8b">piking</b> hips are the same corrections as a regular plank.',
-    notActiveStatus: "Get into side plank position",
-    notActiveTip: "Lie on your side, propped on your forearm, body roughly in one line.",
     goodStatus: "Good form — straight line",
     goodMsg: "Solid side plank — keep breathing and stay braced.",
     sagStatus: "Hips sagging",
@@ -278,11 +213,6 @@ const EXERCISES = [
     near: "shoulder", mid: "hip", far: "knee",
     horizontalMax: 45,
     slopeThreshold: 0.05,
-    instructions:
-      'Lie on your back, knees bent, feet flat, camera to your side. At the top, <b style="color:#7fdc9a">good form</b>: shoulder, hip, and knee form one straight line. ' +
-      '<b style="color:#ff8b8b">Hips too low</b>: lift higher. <b style="color:#ff8b8b">Hips too high</b>: you\'re overarching your lower back.',
-    notActiveStatus: "Get into glute bridge position",
-    notActiveTip: "Lie on your back, knees bent, hips lifted, viewed from the side.",
     goodStatus: "Good form — straight line",
     goodMsg: "Great bridge position — squeeze and hold.",
     sagStatus: "Hips too low",
@@ -299,11 +229,6 @@ const EXERCISES = [
     standingThreshold: 150,
     goodMax: 110,
     maxLean: 45,
-    instructions:
-      'Stand <b>sideways</b> to the camera, bend your knees into a squat. <b style="color:#7fdc9a">Good form</b>: thighs reach about parallel to the floor (knee angle ~90&ndash;110&deg;) with your chest up. ' +
-      'Leaning too far forward means your back is rounding.',
-    notActiveStatus: "Stand and begin your squat",
-    notActiveTip: "Bend your knees to lower into a squat; viewed from the side.",
     goodStatus: "Good squat depth",
     goodMsg: "Great depth — drive through your heels back up.",
     leanStatus: "Leaning too far forward",
@@ -320,11 +245,6 @@ const EXERCISES = [
     standingThreshold: 150,
     goodMax: 110,
     maxLean: 45,
-    instructions:
-      'Step into a lunge, sideways to the camera, leading with the leg facing the camera. <b style="color:#7fdc9a">Good form</b>: front knee bends to about 90&deg; with your chest upright. ' +
-      'Avoid leaning too far forward.',
-    notActiveStatus: "Step into your lunge",
-    notActiveTip: "Bend your front knee, viewed from the side.",
     goodStatus: "Good lunge depth",
     goodMsg: "Good depth — keep your front knee tracking over your foot.",
     leanStatus: "Leaning too far forward",
@@ -336,46 +256,17 @@ const EXERCISES = [
   }
 ];
 
-let currentExerciseIndex = 0;
-
-function renderTabs() {
-  tabsEl.innerHTML = EXERCISES.map((ex, i) => `<button type="button" data-i="${i}" class="${i === currentExerciseIndex ? "active" : ""}">${ex.label}</button>`).join("");
-  tabsEl.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", () => switchExercise(Number(btn.dataset.i)));
-  });
+function exerciseLabel(id) {
+  return EXERCISES.find((e) => e.id === id)?.label || id;
 }
 
-function applyExerciseUi() {
-  const cfg = EXERCISES[currentExerciseIndex];
-  howItWorksEl.innerHTML = cfg.instructions;
-  if (stopBtn.disabled) {
-    // Only overwrite the idle status text; if a session is running, leave the live readout alone.
-    statusEl.textContent = poseLandmarker ? "Model ready. Click Start Camera." : "Loading pose model...";
-    tipEl.textContent = cfg.notActiveTip;
-    panelEl.className = "neutral";
-  }
-  renderTabs();
-}
-
-function switchExercise(index) {
-  if (index === currentExerciseIndex) return;
-  if (!stopBtn.disabled) stopSession();
-  currentExerciseIndex = index;
-  applyExerciseUi();
-}
-
+// ---------------------------------------------------------------------------
+// Telegram notifications. Token/chat ID were configured once already and are
+// just read from localStorage — there is no input UI for this anymore.
+// ---------------------------------------------------------------------------
 const TELEGRAM_TOKEN_KEY = "plankTelegramToken";
 const TELEGRAM_CHATID_KEY = "plankTelegramChatId";
 const DASHBOARD_URL = new URL("dashboard.html", location.href).toString();
-
-telegramTokenInput.value = localStorage.getItem(TELEGRAM_TOKEN_KEY) || "";
-telegramChatIdInput.value = localStorage.getItem(TELEGRAM_CHATID_KEY) || "";
-
-saveTelegramBtn.addEventListener("click", () => {
-  localStorage.setItem(TELEGRAM_TOKEN_KEY, telegramTokenInput.value.trim());
-  localStorage.setItem(TELEGRAM_CHATID_KEY, telegramChatIdInput.value.trim());
-  telegramStatusEl.textContent = "Saved.";
-});
 
 async function sendTelegramMessage(text) {
   const token = localStorage.getItem(TELEGRAM_TOKEN_KEY);
@@ -398,15 +289,6 @@ async function sendTelegramMessage(text) {
     return { ok: false, error: err.message };
   }
 }
-
-testTelegramBtn.addEventListener("click", async () => {
-  telegramStatusEl.textContent = "Sending test message...";
-  saveTelegramBtn.click();
-  const result = await sendTelegramMessage(
-    `🏋️ <b>Fitness by PAI</b>\nTest message — your Posture Coach is connected!\nDashboard: ${DASHBOARD_URL}`
-  );
-  telegramStatusEl.textContent = result.ok ? "Test message sent! Check Telegram." : `Failed: ${result.error}`;
-});
 
 const SPEAK_REPEAT_MS = 6000; // how often to repeat the same correction while it persists
 const GOOD_ANNOUNCE_MS = 15000; // how often to announce perfect-form hold time
@@ -440,11 +322,51 @@ let poseLandmarker;
 let goodStreakStart = null;
 let bestStreakMs = 0;
 let lastFrameTime = null;
-let sessionPlankMs = 0;   // total time held in-position this session (good or bad form)
-let sessionGoodMs = 0;    // total time held with correct ("good") form this session
-let lastSavedPlankMs = 0; // portion of sessionPlankMs already flushed to the daily log
-let lastSavedGoodMs = 0;  // portion of sessionGoodMs already flushed to the daily log
+let sessionPlankMs = 0;   // total time held in-position this session for the CURRENTLY detected exercise
+let sessionGoodMs = 0;    // total time held with correct ("good") form, for the current exercise
+let lastSavedPlankMs = 0; // portion already flushed to the daily log, for the current exercise
+let lastSavedGoodMs = 0;
 let flushIntervalId = null;
+
+// Auto-detection: which exercise is being performed right now, with hysteresis
+// so the label doesn't flicker when a pose sits right on a threshold boundary.
+let currentDetectedId = null;
+let candidateId = null;
+let candidateSince = 0;
+const DETECT_STABLE_MS = 600;
+
+// Per-exercise running totals for THIS camera session (since Start Camera was clicked).
+// The currently-detected exercise's numbers live in the globals above; everything else
+// is parked here until it's the active one again.
+let sessionStats = {};
+
+function commitCurrentToSessionStats() {
+  if (currentDetectedId) {
+    sessionStats[currentDetectedId] = {
+      plankMs: sessionPlankMs,
+      goodMs: sessionGoodMs,
+      bestStreakMs,
+      lastSavedPlankMs,
+      lastSavedGoodMs
+    };
+  }
+}
+
+function switchDetectedExercise(newId) {
+  if (newId === currentDetectedId) return;
+  commitCurrentToSessionStats();
+  currentDetectedId = newId;
+  const s = newId ? sessionStats[newId] : null;
+  sessionPlankMs = s ? s.plankMs : 0;
+  sessionGoodMs = s ? s.goodMs : 0;
+  bestStreakMs = s ? s.bestStreakMs : 0;
+  lastSavedPlankMs = s ? s.lastSavedPlankMs : 0;
+  lastSavedGoodMs = s ? s.lastSavedGoodMs : 0;
+  goodStreakStart = null;
+  lastSpokenKey = null;
+  lastSpokenTime = 0;
+  nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+}
 
 function todayKey() {
   const d = new Date();
@@ -458,7 +380,7 @@ function loadLog() {
   } catch {
     log = {};
   }
-  // Migrate old flat per-day format ({plankMs,...}) to the new per-exercise nested format
+  // Migrate old flat per-day format ({plankMs,...}) to the per-exercise nested format
   // ({plank: {plankMs,...}}) so previously-saved plank sessions keep showing up.
   for (const dateKey of Object.keys(log)) {
     if (typeof log[dateKey].plankMs === "number") {
@@ -479,29 +401,34 @@ function formatDuration(ms) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function flushSessionToLog(sessionEnded) {
-  const deltaPlank = Math.max(0, sessionPlankMs - lastSavedPlankMs);
-  const deltaGood = Math.max(0, sessionGoodMs - lastSavedGoodMs);
-  if (deltaPlank === 0 && deltaGood === 0 && !sessionEnded) return;
-  const exerciseId = EXERCISES[currentExerciseIndex].id;
+// Flushes every exercise touched so far this session into the daily log.
+// Safe to call repeatedly (every 2s) and once more at session end.
+function flushAllToLog(sessionEnded) {
+  commitCurrentToSessionStats();
   const log = loadLog();
   const dateKey = todayKey();
   const dayLog = log[dateKey] || {};
-  const entry = dayLog[exerciseId] || { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
-  entry.plankMs += deltaPlank;
-  entry.goodMs += deltaGood;
-  entry.bestStreakMs = Math.max(entry.bestStreakMs, bestStreakMs);
-  if (sessionEnded) entry.sessions += 1;
-  dayLog[exerciseId] = entry;
+  for (const id of Object.keys(sessionStats)) {
+    const s = sessionStats[id];
+    const deltaPlank = Math.max(0, s.plankMs - s.lastSavedPlankMs);
+    const deltaGood = Math.max(0, s.goodMs - s.lastSavedGoodMs);
+    if (deltaPlank === 0 && deltaGood === 0 && !sessionEnded) continue;
+    const entry = dayLog[id] || { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
+    entry.plankMs += deltaPlank;
+    entry.goodMs += deltaGood;
+    entry.bestStreakMs = Math.max(entry.bestStreakMs, s.bestStreakMs);
+    if (sessionEnded && s.plankMs > 0) entry.sessions += 1;
+    dayLog[id] = entry;
+    s.lastSavedPlankMs = s.plankMs;
+    s.lastSavedGoodMs = s.goodMs;
+  }
   log[dateKey] = dayLog;
   saveLog(log);
-  lastSavedPlankMs = sessionPlankMs;
-  lastSavedGoodMs = sessionGoodMs;
+  if (currentDetectedId && sessionStats[currentDetectedId]) {
+    lastSavedPlankMs = sessionStats[currentDetectedId].lastSavedPlankMs;
+    lastSavedGoodMs = sessionStats[currentDetectedId].lastSavedGoodMs;
+  }
   renderLog();
-}
-
-function exerciseLabel(id) {
-  return EXERCISES.find((e) => e.id === id)?.label || id;
 }
 
 function renderLog() {
@@ -589,6 +516,10 @@ startBtn.addEventListener("click", async () => {
     }
     await acquireStream(currentFacingMode);
 
+    sessionStats = {};
+    currentDetectedId = null;
+    candidateId = null;
+    candidateSince = 0;
     goodStreakStart = null;
     bestStreakMs = 0;
     sessionPlankMs = 0;
@@ -599,9 +530,11 @@ startBtn.addEventListener("click", async () => {
     lastSpokenKey = null;
     lastSpokenTime = 0;
     nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+    detectedLabelEl.textContent = "DETECTING...";
+    detectedLabelEl.classList.remove("locked");
     stopBtn.disabled = false;
     switchCameraBtn.disabled = false;
-    flushIntervalId = setInterval(() => flushSessionToLog(false), 2000);
+    flushIntervalId = setInterval(() => flushAllToLog(false), 2000);
     // iOS/WebKit has a long-standing bug where speechSynthesis silently pauses itself
     // after running a while; periodically resuming it works around that.
     speechResumeIntervalId = setInterval(() => {
@@ -627,11 +560,8 @@ function stopSession() {
     clearInterval(speechResumeIntervalId);
     speechResumeIntervalId = null;
   }
-  const cfg = EXERCISES[currentExerciseIndex];
-  const thisSessionPlankMs = sessionPlankMs;
-  const thisSessionGoodMs = sessionGoodMs;
-  const thisSessionBestStreakMs = bestStreakMs;
-  flushSessionToLog(true);
+  flushAllToLog(true);
+  const performedStats = sessionStats; // snapshot before it gets cleared below
   const stream = video.srcObject;
   if (stream) stream.getTracks().forEach((track) => track.stop());
   video.srcObject = null;
@@ -639,17 +569,27 @@ function stopSession() {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   switchCameraBtn.disabled = true;
+  detectedLabelEl.textContent = "DETECTING...";
+  detectedLabelEl.classList.remove("locked");
   setPanel("neutral", "Session saved", "Click Start Camera to begin a new session.");
   statsEl.textContent = "";
 
-  if (thisSessionPlankMs > 0) {
-    const todayEntry = (loadLog()[todayKey()] || {})[cfg.id] || { plankMs: 0, goodMs: 0, sessions: 0 };
-    const accuracy = thisSessionPlankMs > 0 ? Math.round((thisSessionGoodMs / thisSessionPlankMs) * 100) : 0;
+  const performedIds = Object.keys(performedStats).filter((id) => performedStats[id].plankMs > 0);
+  if (performedIds.length > 0) {
+    const todayLog = (loadLog()[todayKey()] || {});
+    const lines = performedIds.map((id) => {
+      const s = performedStats[id];
+      const accuracy = s.plankMs > 0 ? Math.round((s.goodMs / s.plankMs) * 100) : 0;
+      const todayEntry = todayLog[id] || { plankMs: 0, goodMs: 0, sessions: 0 };
+      return (
+        `<b>${exerciseLabel(id)}</b>: held ${formatDuration(s.plankMs)}, perfect form ${formatDuration(s.goodMs)} (${accuracy}%), best streak ${formatDuration(s.bestStreakMs)}. ` +
+        `Today's total: ${formatDuration(todayEntry.plankMs)}, ${todayEntry.sessions} session(s).`
+      );
+    });
     const message =
-      `🏋️ <b>Fitness by PAI — ${cfg.label} session complete!</b>\n` +
-      `This session: held ${formatDuration(thisSessionPlankMs)}, perfect form for ${formatDuration(thisSessionGoodMs)} (${accuracy}%), best streak ${formatDuration(thisSessionBestStreakMs)}.\n` +
-      `Today's ${cfg.label} total: ${formatDuration(todayEntry.plankMs)} time, ${formatDuration(todayEntry.goodMs)} perfect form, ${todayEntry.sessions} session(s).\n` +
-      `View your dashboard: ${DASHBOARD_URL}`;
+      `🏋️ <b>Fitness by PAI — Session complete!</b>\n` +
+      lines.join("\n") +
+      `\nView your dashboard: ${DASHBOARD_URL}`;
     sendTelegramMessage(message).then((result) => {
       if (!result.ok && result.error) console.warn("Telegram send failed:", result.error);
     });
@@ -658,7 +598,7 @@ function stopSession() {
 
 stopBtn.addEventListener("click", stopSession);
 
-window.addEventListener("beforeunload", () => flushSessionToLog(false));
+window.addEventListener("beforeunload", () => flushAllToLog(false));
 
 exportBtn.addEventListener("click", () => {
   const log = loadLog();
@@ -702,6 +642,42 @@ function pickSide(lm) {
     : { shoulder: lm[12], elbow: lm[14], wrist: lm[16], hip: lm[24], knee: lm[26], ankle: lm[28], ear: lm[8], visSum: rightVis };
 }
 
+// Best-effort classifier: figures out which of the 6 exercises is being performed
+// from pose geometry alone (body orientation, knee bend, shoulder rotation, stance
+// width). Returns an exercise id, or null if no recognizable position is held yet.
+function detectPostureId(lm, j) {
+  const { shoulder, elbow, wrist, hip, knee, ankle } = j;
+  if (!shoulder || !hip || !ankle) return null;
+
+  const dx = ankle.x - shoulder.x, dy = ankle.y - shoulder.y;
+  const bodyAngleFromHorizontal = (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
+  const bodyScale = Math.hypot(dx, dy) || 1;
+
+  if (bodyAngleFromHorizontal <= 50) {
+    // Lying down: plank, push-up, side plank, or glute bridge.
+    const ls = lm[11], rs = lm[12];
+    const shoulderYDiff = Math.abs((ls?.y ?? 0) - (rs?.y ?? 0));
+    if (shoulderYDiff / bodyScale > 0.22) return "sideplank";
+
+    const kneeBend = knee ? angleAt(hip, knee, ankle) : null;
+    if (kneeBend !== null && kneeBend < 140) return "glutebridge";
+
+    const elbowAngle = elbow && wrist ? angleAt(shoulder, elbow, wrist) : null;
+    if (elbowAngle !== null && elbowAngle < 150) return "pushup";
+    return "plank";
+  }
+
+  // Standing-ish: squat or lunge, only once the knees are bent enough.
+  if (!knee) return null;
+  const kneeAngle = angleAt(hip, knee, ankle);
+  if (kneeAngle === null || kneeAngle > 150) return null;
+
+  const la = lm[27], ra = lm[28];
+  const ankleSep = Math.abs((la?.x ?? 0) - (ra?.x ?? 0));
+  const standScale = Math.hypot(shoulder.x - ankle.x, shoulder.y - ankle.y) || 1;
+  return ankleSep / standScale > 0.18 ? "lunge" : "squat";
+}
+
 function drawJointLabel(ctx, point, text, width, height) {
   if (!point) return;
   const x = point.x * width;
@@ -725,7 +701,7 @@ function setPanel(mode, status, tip) {
   tipEl.textContent = tip;
 }
 
-// Evaluates the current exercise's rule against this frame's joints.
+// Evaluates the given exercise's rule against this frame's joints.
 // Returns { active, mode, status, tip, speechKey, speechText, angleLabel, angleValue }.
 function evaluateExercise(cfg, j) {
   if (cfg.type === "line") {
@@ -733,7 +709,7 @@ function evaluateExercise(cfg, j) {
     const dx = far.x - near.x, dy = far.y - near.y;
     const angleFromHorizontal = (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
     if (angleFromHorizontal > cfg.horizontalMax) {
-      return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+      return { active: false };
     }
     const t = dx !== 0 ? (mid.x - near.x) / dx : 0.5;
     const expectedMidY = near.y + t * dy;
@@ -751,10 +727,10 @@ function evaluateExercise(cfg, j) {
 
   // "angle" type: squat / lunge
   const { shoulder, hip, knee, ankle } = j;
-  if (!knee) return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+  if (!knee) return { active: false };
   const kneeAngle = angleAt(hip, knee, ankle);
   if (kneeAngle === null || kneeAngle > cfg.standingThreshold) {
-    return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+    return { active: false };
   }
   const torsoDx = shoulder.x - hip.x, torsoDy = shoulder.y - hip.y;
   const torsoAngleFromVertical = (Math.atan2(Math.abs(torsoDx), Math.abs(torsoDy)) * 180) / Math.PI;
@@ -810,13 +786,31 @@ function loop() {
     return;
   }
 
-  const cfg = EXERCISES[currentExerciseIndex];
+  const rawId = detectPostureId(lm, joints);
+  if (rawId !== candidateId) {
+    candidateId = rawId;
+    candidateSince = now;
+  }
+  if (now - candidateSince >= DETECT_STABLE_MS && candidateId !== currentDetectedId) {
+    switchDetectedExercise(candidateId);
+  }
+
+  detectedLabelEl.textContent = currentDetectedId ? exerciseLabel(currentDetectedId).toUpperCase() : "DETECTING...";
+  detectedLabelEl.classList.toggle("locked", !!currentDetectedId);
+
+  if (!currentDetectedId) {
+    setPanel("neutral", "Detecting your exercise...", "Move into plank, push-up, side plank, glute bridge, squat, or lunge position.");
+    statsEl.textContent = "";
+    goodStreakStart = null;
+    ctx.restore();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const cfg = EXERCISES.find((e) => e.id === currentDetectedId);
   const r = evaluateExercise(cfg, joints);
 
   if (!r.active) {
-    setPanel("neutral", r.status, r.tip);
-    statsEl.textContent = "";
-    goodStreakStart = null;
     ctx.restore();
     requestAnimationFrame(loop);
     return;
@@ -866,7 +860,6 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
-applyExerciseUi();
 init();
 renderLog();
 </script>
