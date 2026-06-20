@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Plank Posture Coach</title>
 <style>
   body {
@@ -91,6 +92,20 @@
   #logTable { width: 100%; border-collapse: collapse; font-size: 13px; }
   #logTable th, #logTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #333; }
   #logTable th { opacity: 0.7; font-weight: 600; }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 26px; }
+    #howItWorks { font-size: 16px; }
+    #status { font-size: 24px; }
+    #tip { font-size: 17px; }
+    #stats { font-size: 15px; }
+    button { font-size: 17px; padding: 12px 18px; }
+    #audioToggleLabel { font-size: 16px; }
+    #telegramSection .hint { font-size: 14px; }
+    #telegramSection input { font-size: 16px; padding: 12px; }
+    #telegramSection h2, #logSection h2 { font-size: 19px; }
+    #logTable { font-size: 15px; }
+  }
 </style>
 </head>
 <body>

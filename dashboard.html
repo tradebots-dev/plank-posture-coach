@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Plank Progress Dashboard</title>
 <style>
   :root {
@@ -57,6 +58,21 @@
     text-align: center;
     color: var(--muted);
     max-width: 600px;
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 18px 14px; }
+    h1 { font-size: 30px; }
+    #subtitle { font-size: 16px; margin-bottom: 20px; }
+    #backLink { font-size: 16px; display: inline-block; margin-bottom: 10px; }
+    #cards { grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0 28px; }
+    .card { padding: 16px 14px; }
+    .card .value { font-size: 30px; }
+    .card .label { font-size: 14px; margin-top: 6px; }
+    .charts { gap: 20px; }
+    .chart-card { padding: 16px 14px; }
+    .chart-card h2 { font-size: 17px; margin-bottom: 14px; }
+    #empty { padding: 28px 20px; font-size: 17px; }
   }
 </style>
 </head>
