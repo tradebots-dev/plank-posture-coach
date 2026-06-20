@@ -412,6 +412,7 @@ let sessionGoodMs = 0;    // total time held with correct ("good") form this ses
 let lastSavedPlankMs = 0; // portion of sessionPlankMs already flushed to the daily log
 let lastSavedGoodMs = 0;  // portion of sessionGoodMs already flushed to the daily log
 let flushIntervalId = null;
+let cameraActive = false; // guards the detection loop so a stopped session's loop dies instead of running forever
 
 function todayKey() {
   const d = new Date();
@@ -604,6 +605,7 @@ startBtn.addEventListener("click", async () => {
       if ("speechSynthesis" in window) window.speechSynthesis.resume();
     }, 4000);
 
+    cameraActive = true;
     requestAnimationFrame(loop);
   } catch (err) {
     console.error("Camera error:", err);
@@ -615,6 +617,7 @@ startBtn.addEventListener("click", async () => {
 });
 
 function stopSession() {
+  cameraActive = false; // stops the next scheduled frame of the detection loop dead, before anything else
   if (flushIntervalId) {
     clearInterval(flushIntervalId);
     flushIntervalId = null;
@@ -764,6 +767,7 @@ function evaluateExercise(cfg, j) {
 }
 
 function loop() {
+  if (!cameraActive) return; // session was stopped (or switched exercises) — let this loop chain die here
   const now = performance.now();
   if (lastFrameTime === null) lastFrameTime = now;
   const deltaMs = now - lastFrameTime;
