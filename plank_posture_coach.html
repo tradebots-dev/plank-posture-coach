@@ -547,6 +547,29 @@ switchCameraBtn.addEventListener("click", async () => {
   switchCameraBtn.disabled = false;
 });
 
+// iOS Safari doesn't re-capture the video feed in the new orientation when you
+// physically rotate the phone mid-session — it keeps serving frames in whatever
+// orientation the stream started in. Restarting the stream forces a fresh capture
+// that matches the new orientation.
+let reorientTimeoutId = null;
+function handleOrientationChange() {
+  if (stopBtn.disabled) return; // no active camera session
+  if (reorientTimeoutId) clearTimeout(reorientTimeoutId);
+  reorientTimeoutId = setTimeout(async () => {
+    const oldStream = video.srcObject;
+    try {
+      await acquireStream(currentFacingMode);
+      if (oldStream) oldStream.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      console.error("Re-orientation camera restart failed:", err);
+    }
+  }, 350);
+}
+window.addEventListener("orientationchange", handleOrientationChange);
+if (screen.orientation) {
+  screen.orientation.addEventListener("change", handleOrientationChange);
+}
+
 startBtn.addEventListener("click", async () => {
   // Must run synchronously inside the tap, before any await — iOS Safari only
   // "unlocks" speech synthesis if speak() is first called directly from a user gesture.
