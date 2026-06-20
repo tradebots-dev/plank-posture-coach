@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Plank Progress Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1b1e26;
+    --accent: #3a73e0;
+    --good: #5fd98a;
+    --bad: #ff7a7a;
+    --text: #eee;
+    --muted: #9aa0ab;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  #subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  #backLink { color: var(--accent); font-size: 13px; text-decoration: none; }
+  #cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px;
+    margin: 20px 0 32px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card .value { font-size: 26px; font-weight: 700; }
+  .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .charts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+    max-width: 1100px;
+  }
+  .chart-card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .chart-card h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+  canvas { max-width: 100%; }
+  #empty {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    max-width: 600px;
+  }
+</style>
+</head>
+<body>
+  <a id="backLink" href="plank_posture_coach.html">&larr; Back to tracker</a>
+  <h1>Plank Progress Dashboard</h1>
+  <div id="subtitle">Pulled live from this browser's saved plank log.</div>
+
+  <div id="content"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+const LOG_KEY = "plankPostureLog";
+
+function loadLog() {
+  try {
+    return JSON.parse(localStorage.getItem(LOG_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function fmtMinSec(ms) {
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}m ${s}s`;
+}
+
+function fmtDateLabel(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function render() {
+  const log = loadLog();
+  const keys = Object.keys(log).sort();
+  const content = document.getElementById("content");
+
+  if (keys.length === 0) {
+    content.innerHTML = `<div id="empty">No plank sessions logged yet. Go do a plank, click "Stop &amp; Save" on the tracker page, then refresh this dashboard.</div>`;
+    return;
+  }
+
+  let totalPlankMs = 0, totalGoodMs = 0, totalSessions = 0, bestStreakEver = 0;
+  for (const k of keys) {
+    const e = log[k];
+    totalPlankMs += e.plankMs;
+    totalGoodMs += e.goodMs;
+    totalSessions += e.sessions;
+    bestStreakEver = Math.max(bestStreakEver, e.bestStreakMs);
+  }
+  const avgPerfectPct = totalPlankMs > 0 ? Math.round((totalGoodMs / totalPlankMs) * 100) : 0;
+
+  content.innerHTML = `
+    <div id="cards">
+      <div class="card"><div class="value">${keys.length}</div><div class="label">Days practiced</div></div>
+      <div class="card"><div class="value">${fmtMinSec(totalPlankMs)}</div><div class="label">Total plank time</div></div>
+      <div class="card"><div class="value">${fmtMinSec(totalGoodMs)}</div><div class="label">Total perfect-form time</div></div>
+      <div class="card"><div class="value">${fmtMinSec(bestStreakEver)}</div><div class="label">Best streak ever</div></div>
+      <div class="card"><div class="value">${avgPerfectPct}%</div><div class="label">Avg. form accuracy</div></div>
+      <div class="card"><div class="value">${totalSessions}</div><div class="label">Total sessions</div></div>
+    </div>
+    <div class="charts">
+      <div class="chart-card">
+        <h2>Plank time vs. perfect-form time per day</h2>
+        <canvas id="timeChart" height="100"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Form accuracy trend (%)</h2>
+        <canvas id="accuracyChart" height="80"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Best streak per day (seconds)</h2>
+        <canvas id="streakChart" height="80"></canvas>
+      </div>
+    </div>
+  `;
+
+  const labels = keys.map(fmtDateLabel);
+  const plankSec = keys.map((k) => +(log[k].plankMs / 1000).toFixed(1));
+  const goodSec = keys.map((k) => +(log[k].goodMs / 1000).toFixed(1));
+  const accuracyPct = keys.map((k) => (log[k].plankMs > 0 ? Math.round((log[k].goodMs / log[k].plankMs) * 100) : 0));
+  const streakSec = keys.map((k) => +(log[k].bestStreakMs / 1000).toFixed(1));
+
+  const gridColor = "rgba(255,255,255,0.06)";
+  const tickColor = "#9aa0ab";
+
+  new Chart(document.getElementById("timeChart"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "Total plank time (s)", data: plankSec, backgroundColor: "rgba(58,115,224,0.6)", borderRadius: 4 },
+        { label: "Perfect-form time (s)", data: goodSec, backgroundColor: "rgba(95,217,138,0.8)", borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: tickColor } } },
+      scales: {
+        x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+        y: { ticks: { color: tickColor }, grid: { color: gridColor }, beginAtZero: true }
+      }
+    }
+  });
+
+  new Chart(document.getElementById("accuracyChart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Form accuracy %",
+          data: accuracyPct,
+          borderColor: "#5fd98a",
+          backgroundColor: "rgba(95,217,138,0.15)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: tickColor } } },
+      scales: {
+        x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+        y: { ticks: { color: tickColor }, grid: { color: gridColor }, min: 0, max: 100 }
+      }
+    }
+  });
+
+  new Chart(document.getElementById("streakChart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Best streak (s)",
+          data: streakSec,
+          borderColor: "#3a73e0",
+          backgroundColor: "rgba(58,115,224,0.15)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: tickColor } } },
+      scales: {
+        x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+        y: { ticks: { color: tickColor }, grid: { color: gridColor }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+render();
+window.addEventListener("storage", render);
+</script>
+</body>
+</html>

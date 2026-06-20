@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Plank Posture Coach</title>
+<style>
+  body {
+    margin: 0;
+    background: #111;
+    color: #eee;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+  }
+  h1 { font-size: 20px; margin: 8px 0 12px; }
+  #stage {
+    position: relative;
+    width: 100%;
+    max-width: 720px;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 8px;
+    pointer-events: none;
+  }
+  #stage.mirrored video, #stage.mirrored canvas {
+    transform: scaleX(-1); /* mirror only when using a front/selfie camera */
+  }
+  #spacer { width: 100%; max-width: 720px; }
+  #panel {
+    width: 100%;
+    max-width: 720px;
+    margin-top: 12px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: #1c1c1c;
+    transition: background 0.2s ease;
+  }
+  #status { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  #tip { font-size: 15px; opacity: 0.9; }
+  #stats { font-size: 13px; opacity: 0.6; margin-top: 8px; white-space: pre-line; }
+  .good { background: #173d24 !important; }
+  .bad  { background: #3d1717 !important; }
+  .neutral { background: #2a2a17 !important; }
+  button {
+    margin-top: 12px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    background: #3a73e0;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled { background: #444; cursor: not-allowed; }
+  #controls { display: flex; gap: 10px; width: 100%; max-width: 720px; flex-wrap: wrap; align-items: center; }
+  #controls a { text-decoration: none; }
+  #audioToggleLabel { font-size: 13px; color: var(--text, #eee); display: flex; align-items: center; gap: 6px; margin-left: 4px; }
+  #howItWorks {
+    width: 100%;
+    max-width: 720px;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0.85;
+    margin: 0 0 12px;
+  }
+  #logSection { width: 100%; max-width: 720px; margin-top: 24px; }
+  #logSection h2 { font-size: 16px; margin-bottom: 8px; }
+  #logTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #logTable th, #logTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #333; }
+  #logTable th { opacity: 0.7; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>Plank Posture Coach</h1>
+  <p id="howItWorks">
+    Stand <b>sideways</b> to the camera in your plank. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles form one straight line.
+    <b style="color:#ff8b8b">Hips sagging</b>: your lower back is dipping below that line &mdash; lift your hips and brace your core.
+    <b style="color:#ff8b8b">Hips too high</b>: you're piking up &mdash; lower your hips back in line.
+  </p>
+  <div id="stage">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="spacer"></div>
+  <div id="panel" class="neutral">
+    <div id="status">Loading pose model...</div>
+    <div id="tip">Turn sideways to the camera so your shoulder, hip, and ankle are all visible.</div>
+    <div id="stats"></div>
+  </div>
+  <div id="controls">
+    <button id="startBtn">Start Camera</button>
+    <button id="stopBtn" disabled>Stop &amp; Save</button>
+    <button id="switchCameraBtn" disabled>Switch Camera</button>
+    <button id="exportBtn">Export CSV</button>
+    <a id="dashboardLink" href="dashboard.html" target="_blank"><button type="button">View Dashboard</button></a>
+    <label id="audioToggleLabel"><input type="checkbox" id="audioToggle" checked> Audio cues</label>
+  </div>
+  <div id="logSection">
+    <h2>Daily Log</h2>
+    <table id="logTable">
+      <thead><tr><th>Date</th><th>Total Plank Time</th><th>Perfect-Form Time</th><th>Best Streak</th><th>Sessions</th></tr></thead>
+      <tbody><tr><td colspan="5">No sessions logged yet.</td></tr></tbody>
+    </table>
+  </div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("overlay");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const tipEl = document.getElementById("tip");
+const statsEl = document.getElementById("stats");
+const panelEl = document.getElementById("panel");
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+const switchCameraBtn = document.getElementById("switchCameraBtn");
+const exportBtn = document.getElementById("exportBtn");
+const audioToggle = document.getElementById("audioToggle");
+const logTableBody = document.querySelector("#logTable tbody");
+
+const SPEAK_REPEAT_MS = 6000; // how often to repeat the same correction while it persists
+const GOOD_ANNOUNCE_MS = 15000; // how often to announce perfect-form hold time
+let lastSpokenKey = null;
+let lastSpokenTime = 0;
+let nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+
+function speak(text) {
+  if (!audioToggle.checked || !("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1;
+  utter.pitch = 1;
+  window.speechSynthesis.speak(utter);
+}
+
+function maybeSpeak(key, text, now) {
+  const changed = key !== lastSpokenKey;
+  const dueForRepeat = now - lastSpokenTime > SPEAK_REPEAT_MS;
+  if (changed || dueForRepeat) {
+    speak(text);
+    lastSpokenKey = key;
+    lastSpokenTime = now;
+  }
+}
+
+const HIP_SLOPE_THRESHOLD = 0.045; // fraction of body length; tune for sensitivity
+const HORIZONTAL_MAX_ANGLE = 40; // degrees from horizontal to count as "in plank"
+const LOG_KEY = "plankPostureLog";
+
+let poseLandmarker;
+let goodStreakStart = null;
+let bestStreakMs = 0;
+let lastFrameTime = null;
+let sessionPlankMs = 0;   // total time held in a plank position this session (good or bad form)
+let sessionGoodMs = 0;    // total time held with correct ("good") form this session
+let lastSavedPlankMs = 0; // portion of sessionPlankMs already flushed to the daily log
+let lastSavedGoodMs = 0;  // portion of sessionGoodMs already flushed to the daily log
+let flushIntervalId = null;
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function loadLog() {
+  try {
+    return JSON.parse(localStorage.getItem(LOG_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLog(log) {
+  localStorage.setItem(LOG_KEY, JSON.stringify(log));
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function flushSessionToLog(sessionEnded) {
+  const deltaPlank = Math.max(0, sessionPlankMs - lastSavedPlankMs);
+  const deltaGood = Math.max(0, sessionGoodMs - lastSavedGoodMs);
+  if (deltaPlank === 0 && deltaGood === 0 && !sessionEnded) return;
+  const log = loadLog();
+  const key = todayKey();
+  const entry = log[key] || { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
+  entry.plankMs += deltaPlank;
+  entry.goodMs += deltaGood;
+  entry.bestStreakMs = Math.max(entry.bestStreakMs, bestStreakMs);
+  if (sessionEnded) entry.sessions += 1;
+  log[key] = entry;
+  saveLog(log);
+  lastSavedPlankMs = sessionPlankMs;
+  lastSavedGoodMs = sessionGoodMs;
+  renderLog();
+}
+
+function renderLog() {
+  const log = loadLog();
+  const keys = Object.keys(log).sort().reverse().slice(0, 14);
+  logTableBody.innerHTML = keys.length
+    ? keys
+        .map((key) => {
+          const e = log[key];
+          return `<tr><td>${key}</td><td>${formatDuration(e.plankMs)}</td><td>${formatDuration(e.goodMs)}</td><td>${formatDuration(e.bestStreakMs)}</td><td>${e.sessions}</td></tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5">No sessions logged yet.</td></tr>`;
+}
+
+async function init() {
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  poseLandmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+  statusEl.textContent = "Model ready. Click Start Camera.";
+}
+
+const stageEl = document.getElementById("stage");
+let currentFacingMode = "user"; // front camera by default; use the Switch Camera button to go to the back camera
+let isMirrored = false;
+
+async function acquireStream(facingMode) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: 1280, height: 720, facingMode: { ideal: facingMode } }
+  });
+  video.srcObject = stream;
+  await video.play();
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  stageEl.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+
+  const track = stream.getVideoTracks()[0];
+  const actualFacing = track.getSettings().facingMode;
+  isMirrored = actualFacing === "user";
+  stageEl.classList.toggle("mirrored", isMirrored);
+}
+
+switchCameraBtn.addEventListener("click", async () => {
+  switchCameraBtn.disabled = true;
+  const oldStream = video.srcObject;
+  currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
+  try {
+    await acquireStream(currentFacingMode);
+    if (oldStream) oldStream.getTracks().forEach((t) => t.stop());
+  } catch (err) {
+    console.error("Switch camera error:", err);
+    tipEl.textContent = `Couldn't switch camera: ${err.message || err}`;
+  }
+  switchCameraBtn.disabled = false;
+});
+
+startBtn.addEventListener("click", async () => {
+  startBtn.disabled = true;
+  statusEl.textContent = "Requesting camera access...";
+  tipEl.textContent = "";
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("getUserMedia is not available (camera API requires a secure context: http://localhost or https://).");
+    }
+    await acquireStream(currentFacingMode);
+
+    goodStreakStart = null;
+    bestStreakMs = 0;
+    sessionPlankMs = 0;
+    sessionGoodMs = 0;
+    lastSavedPlankMs = 0;
+    lastSavedGoodMs = 0;
+    lastFrameTime = null;
+    lastSpokenKey = null;
+    lastSpokenTime = 0;
+    nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+    stopBtn.disabled = false;
+    switchCameraBtn.disabled = false;
+    flushIntervalId = setInterval(() => flushSessionToLog(false), 2000);
+
+    requestAnimationFrame(loop);
+  } catch (err) {
+    console.error("Camera error:", err);
+    statusEl.textContent = `Camera failed: ${err.name || "Error"}`;
+    tipEl.textContent = err.message || String(err);
+    startBtn.disabled = false;
+    return;
+  }
+});
+
+stopBtn.addEventListener("click", () => {
+  if (flushIntervalId) {
+    clearInterval(flushIntervalId);
+    flushIntervalId = null;
+  }
+  flushSessionToLog(true);
+  const stream = video.srcObject;
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  video.srcObject = null;
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  switchCameraBtn.disabled = true;
+  setPanel("neutral", "Session saved", "Click Start Camera to begin a new plank session.");
+  statsEl.textContent = "";
+});
+
+window.addEventListener("beforeunload", () => flushSessionToLog(false));
+
+exportBtn.addEventListener("click", () => {
+  const log = loadLog();
+  const keys = Object.keys(log).sort();
+  const rows = ["date,plank_seconds,perfect_form_seconds,best_streak_seconds,sessions"];
+  for (const key of keys) {
+    const e = log[key];
+    rows.push(`${key},${(e.plankMs / 1000).toFixed(1)},${(e.goodMs / 1000).toFixed(1)},${(e.bestStreakMs / 1000).toFixed(1)},${e.sessions}`);
+  }
+  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "plank_posture_log.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+function angleAt(a, b, c) {
+  // angle at vertex b, formed by points a-b-c, in degrees
+  const v1 = { x: a.x - b.x, y: a.y - b.y };
+  const v2 = { x: c.x - b.x, y: c.y - b.y };
+  const dot = v1.x * v2.x + v1.y * v2.y;
+  const mag1 = Math.hypot(v1.x, v1.y);
+  const mag2 = Math.hypot(v2.x, v2.y);
+  if (mag1 === 0 || mag2 === 0) return null;
+  const cos = Math.min(1, Math.max(-1, dot / (mag1 * mag2)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+function pickSide(lm) {
+  const leftVis = (lm[11]?.visibility ?? 0) + (lm[23]?.visibility ?? 0) + (lm[27]?.visibility ?? 0);
+  const rightVis = (lm[12]?.visibility ?? 0) + (lm[24]?.visibility ?? 0) + (lm[28]?.visibility ?? 0);
+  return leftVis >= rightVis
+    ? { shoulder: lm[11], elbow: lm[13], wrist: lm[15], hip: lm[23], knee: lm[25], ankle: lm[27], ear: lm[7], visSum: leftVis }
+    : { shoulder: lm[12], elbow: lm[14], wrist: lm[16], hip: lm[24], knee: lm[26], ankle: lm[28], ear: lm[8], visSum: rightVis };
+}
+
+function drawJointLabel(ctx, point, text, width, height) {
+  if (!point) return;
+  const x = point.x * width;
+  const y = point.y * height;
+  ctx.save();
+  ctx.translate(x, y);
+  if (isMirrored) ctx.scale(-1, 1); // pre-flip so the label reads correctly after the page's CSS mirror
+  ctx.font = "bold 14px sans-serif";
+  ctx.textAlign = "center";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.fillStyle = "#ffe066";
+  ctx.strokeText(text, 0, -12);
+  ctx.fillText(text, 0, -12);
+  ctx.restore();
+}
+
+function setPanel(mode, status, tip) {
+  panelEl.className = mode;
+  statusEl.textContent = status;
+  tipEl.textContent = tip;
+}
+
+function loop() {
+  const now = performance.now();
+  if (lastFrameTime === null) lastFrameTime = now;
+  const deltaMs = now - lastFrameTime;
+  lastFrameTime = now;
+  const result = poseLandmarker.detectForVideo(video, now);
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!result.landmarks.length) {
+    setPanel("neutral", "No person detected", "Step into frame, sideways to the camera, full body visible.");
+    statsEl.textContent = "";
+    goodStreakStart = null;
+    ctx.restore();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const lm = result.landmarks[0];
+  const drawer = new DrawingUtils(ctx);
+  drawer.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color: "#888", lineWidth: 2 });
+  drawer.drawLandmarks(lm, { color: "#fff", radius: 3 });
+
+  const { shoulder, elbow, wrist, hip, knee, ankle, ear, visSum } = pickSide(lm);
+
+  drawJointLabel(ctx, ear, "Ear", canvas.width, canvas.height);
+  drawJointLabel(ctx, shoulder, "Shoulder", canvas.width, canvas.height);
+  drawJointLabel(ctx, elbow, "Elbow", canvas.width, canvas.height);
+  drawJointLabel(ctx, wrist, "Wrist", canvas.width, canvas.height);
+  drawJointLabel(ctx, hip, "Hip", canvas.width, canvas.height);
+  drawJointLabel(ctx, knee, "Knee", canvas.width, canvas.height);
+  drawJointLabel(ctx, ankle, "Ankle", canvas.width, canvas.height);
+
+  if (visSum < 1.2 || !shoulder || !hip || !ankle) {
+    setPanel("neutral", "Can't see your side clearly", "Turn so your shoulder, hip, and ankle are all in frame.");
+    statsEl.textContent = "";
+    goodStreakStart = null;
+    ctx.restore();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // Is the body roughly horizontal (i.e. actually in a plank, not standing/sitting)?
+  const dx = ankle.x - shoulder.x;
+  const dy = ankle.y - shoulder.y;
+  const bodyAngleFromHorizontal = (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
+
+  if (bodyAngleFromHorizontal > HORIZONTAL_MAX_ANGLE) {
+    setPanel("neutral", "Get into plank position", "Body should be roughly horizontal, shoulder to ankle, viewed from the side.");
+    statsEl.textContent = "";
+    goodStreakStart = null;
+    ctx.restore();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // Body is roughly horizontal, so this counts as actively holding a plank.
+  sessionPlankMs += deltaMs;
+
+  // Expected hip height if shoulder-hip-ankle were a straight line, vs actual.
+  const t = dx !== 0 ? (hip.x - shoulder.x) / dx : 0.5;
+  const expectedHipY = shoulder.y + t * dy;
+  const bodyLength = Math.hypot(dx, dy) || 1;
+  const hipDeviation = (hip.y - expectedHipY) / bodyLength; // positive = hip below line (sagging)
+
+  const hipAngle = angleAt(shoulder, hip, ankle);
+  let neckNote = "";
+  if (ear && elbow) {
+    const neckAngle = angleAt(ear, shoulder, hip);
+    if (neckAngle !== null && neckAngle < 150) {
+      neckNote = " Also lift your head slightly so your neck is in line with your spine.";
+    }
+  }
+
+  let mode, status, tip;
+  if (Math.abs(hipDeviation) <= HIP_SLOPE_THRESHOLD) {
+    mode = "good";
+    status = "Good form — body is straight";
+    tip = "Keep your core braced and breathe steadily." + neckNote;
+    if (goodStreakStart === null) {
+      goodStreakStart = now;
+      nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+      if (lastSpokenKey && lastSpokenKey !== "good") speak("Good form, keep holding.");
+    }
+    sessionGoodMs += deltaMs;
+    lastSpokenKey = "good";
+    const goodElapsedMs = now - goodStreakStart;
+    if (goodElapsedMs >= nextGoodAnnounceMs) {
+      speak(`Perfect form for ${Math.round(nextGoodAnnounceMs / 1000)} seconds. Keep it up.`);
+      nextGoodAnnounceMs += GOOD_ANNOUNCE_MS;
+    }
+  } else if (hipDeviation > HIP_SLOPE_THRESHOLD) {
+    mode = "bad";
+    status = "Hips sagging";
+    tip = "Lift your hips and squeeze your glutes/core — your lower back is dipping." + neckNote;
+    goodStreakStart = null;
+    maybeSpeak("sagging", "Lift your hips. Your lower back is sagging.", now);
+  } else {
+    mode = "bad";
+    status = "Hips too high";
+    tip = "Lower your hips so shoulders, hips, and ankles form one straight line." + neckNote;
+    goodStreakStart = null;
+    maybeSpeak("too_high", "Lower your hips. You're piking up too much.", now);
+  }
+
+  if (goodStreakStart !== null) {
+    const streakMs = now - goodStreakStart;
+    bestStreakMs = Math.max(bestStreakMs, streakMs);
+  }
+
+  setPanel(mode, status, tip);
+  const currentStreak = goodStreakStart ? ((now - goodStreakStart) / 1000).toFixed(1) : "0.0";
+  statsEl.textContent =
+    `Hip angle: ${hipAngle ? hipAngle.toFixed(0) : "--"}°  |  Current good-form streak: ${currentStreak}s  |  Best streak: ${(bestStreakMs / 1000).toFixed(1)}s\n` +
+    `Total plank time held: ${formatDuration(sessionPlankMs)}  |  Total perfect-form time: ${formatDuration(sessionGoodMs)}`;
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+
+init();
+renderLog();
+</script>
+</body>
+</html>
