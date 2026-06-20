@@ -413,6 +413,7 @@ const GOOD_ANNOUNCE_MS = 15000; // how often to announce perfect-form hold time
 let lastSpokenKey = null;
 let lastSpokenTime = 0;
 let nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
+let speechResumeIntervalId = null;
 
 function speak(text) {
   if (!audioToggle.checked || !("speechSynthesis" in window)) return;
@@ -574,6 +575,11 @@ switchCameraBtn.addEventListener("click", async () => {
 });
 
 startBtn.addEventListener("click", async () => {
+  // Must run synchronously inside the tap, before any await — iOS Safari only
+  // "unlocks" speech synthesis if speak() is first called directly from a user gesture.
+  if ("speechSynthesis" in window && audioToggle.checked) {
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  }
   startBtn.disabled = true;
   statusEl.textContent = "Requesting camera access...";
   tipEl.textContent = "";
@@ -596,6 +602,11 @@ startBtn.addEventListener("click", async () => {
     stopBtn.disabled = false;
     switchCameraBtn.disabled = false;
     flushIntervalId = setInterval(() => flushSessionToLog(false), 2000);
+    // iOS/WebKit has a long-standing bug where speechSynthesis silently pauses itself
+    // after running a while; periodically resuming it works around that.
+    speechResumeIntervalId = setInterval(() => {
+      if ("speechSynthesis" in window) window.speechSynthesis.resume();
+    }, 4000);
 
     requestAnimationFrame(loop);
   } catch (err) {
@@ -611,6 +622,10 @@ function stopSession() {
   if (flushIntervalId) {
     clearInterval(flushIntervalId);
     flushIntervalId = null;
+  }
+  if (speechResumeIntervalId) {
+    clearInterval(speechResumeIntervalId);
+    speechResumeIntervalId = null;
   }
   const cfg = EXERCISES[currentExerciseIndex];
   const thisSessionPlankMs = sessionPlankMs;
