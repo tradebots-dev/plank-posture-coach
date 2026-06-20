@@ -59,8 +59,18 @@
     color: var(--muted);
     max-width: 600px;
   }
+  #exerciseSelect {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    margin: 10px 0 24px;
+  }
 
   @media (max-width: 600px) {
+    #exerciseSelect { font-size: 16px; padding: 10px 14px; width: 100%; }
     body { padding: 18px 14px; }
     h1 { font-size: 30px; }
     #subtitle { font-size: 16px; margin-bottom: 20px; }
@@ -78,21 +88,74 @@
 </head>
 <body>
   <a id="backLink" href="plank_posture_coach.html">&larr; Back to tracker</a>
-  <h1>Plank Progress Dashboard</h1>
-  <div id="subtitle">Pulled live from this browser's saved plank log.</div>
+  <h1>Posture Coach Dashboard</h1>
+  <div id="subtitle">Pulled live from this browser's saved workout log.</div>
+  <select id="exerciseSelect"></select>
 
   <div id="content"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 const LOG_KEY = "plankPostureLog";
+const EXERCISE_LABELS = {
+  plank: "Plank",
+  pushup: "Push-up",
+  sideplank: "Side Plank",
+  glutebridge: "Glute Bridge",
+  squat: "Squat",
+  lunge: "Lunge"
+};
+const exerciseSelect = document.getElementById("exerciseSelect");
+
+function exerciseLabel(id) {
+  return EXERCISE_LABELS[id] || id;
+}
 
 function loadLog() {
+  let log;
   try {
-    return JSON.parse(localStorage.getItem(LOG_KEY)) || {};
+    log = JSON.parse(localStorage.getItem(LOG_KEY)) || {};
   } catch {
-    return {};
+    log = {};
   }
+  // Migrate old flat per-day format ({plankMs,...}) to the per-exercise nested format.
+  for (const dateKey of Object.keys(log)) {
+    if (typeof log[dateKey].plankMs === "number") {
+      log[dateKey] = { plank: log[dateKey] };
+    }
+  }
+  return log;
+}
+
+// Flattens the nested {date: {exerciseId: stats}} log into a filtered, per-day series.
+// exerciseId === "__all__" sums every exercise together for that day.
+function buildSeries(log, exerciseId) {
+  const dateKeys = Object.keys(log).sort();
+  const series = [];
+  for (const dateKey of dateKeys) {
+    const dayLog = log[dateKey];
+    const ids = exerciseId === "__all__" ? Object.keys(dayLog) : Object.keys(dayLog).filter((id) => id === exerciseId);
+    if (ids.length === 0) continue;
+    const merged = { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
+    for (const id of ids) {
+      merged.plankMs += dayLog[id].plankMs;
+      merged.goodMs += dayLog[id].goodMs;
+      merged.bestStreakMs = Math.max(merged.bestStreakMs, dayLog[id].bestStreakMs);
+      merged.sessions += dayLog[id].sessions;
+    }
+    series.push({ date: dateKey, ...merged });
+  }
+  return series;
+}
+
+function populateExerciseSelect(log) {
+  const found = new Set();
+  for (const dateKey of Object.keys(log)) {
+    for (const id of Object.keys(log[dateKey])) found.add(id);
+  }
+  const ids = Array.from(found).sort((a, b) => exerciseLabel(a).localeCompare(exerciseLabel(b)));
+  exerciseSelect.innerHTML =
+    `<option value="__all__">All exercises</option>` + ids.map((id) => `<option value="${id}">${exerciseLabel(id)}</option>`).join("");
 }
 
 function fmtMinSec(ms) {
@@ -109,17 +172,21 @@ function fmtDateLabel(key) {
 
 function render() {
   const log = loadLog();
-  const keys = Object.keys(log).sort();
+  const previousSelection = exerciseSelect.value || "__all__";
+  populateExerciseSelect(log);
+  exerciseSelect.value = previousSelection;
+  if (exerciseSelect.value !== previousSelection) exerciseSelect.value = "__all__"; // selection no longer exists
+  const selected = exerciseSelect.value;
+  const series = buildSeries(log, selected);
   const content = document.getElementById("content");
 
-  if (keys.length === 0) {
-    content.innerHTML = `<div id="empty">No plank sessions logged yet. Go do a plank, click "Stop &amp; Save" on the tracker page, then refresh this dashboard.</div>`;
+  if (series.length === 0) {
+    content.innerHTML = `<div id="empty">No sessions logged yet for this selection. Go do a workout, click "Stop &amp; Save" on the tracker page, then refresh this dashboard.</div>`;
     return;
   }
 
   let totalPlankMs = 0, totalGoodMs = 0, totalSessions = 0, bestStreakEver = 0;
-  for (const k of keys) {
-    const e = log[k];
+  for (const e of series) {
     totalPlankMs += e.plankMs;
     totalGoodMs += e.goodMs;
     totalSessions += e.sessions;
@@ -127,10 +194,12 @@ function render() {
   }
   const avgPerfectPct = totalPlankMs > 0 ? Math.round((totalGoodMs / totalPlankMs) * 100) : 0;
 
+  const timeLabel = selected === "__all__" ? "Total time" : `Total ${exerciseLabel(selected)} time`;
+
   content.innerHTML = `
     <div id="cards">
-      <div class="card"><div class="value">${keys.length}</div><div class="label">Days practiced</div></div>
-      <div class="card"><div class="value">${fmtMinSec(totalPlankMs)}</div><div class="label">Total plank time</div></div>
+      <div class="card"><div class="value">${series.length}</div><div class="label">Days practiced</div></div>
+      <div class="card"><div class="value">${fmtMinSec(totalPlankMs)}</div><div class="label">${timeLabel}</div></div>
       <div class="card"><div class="value">${fmtMinSec(totalGoodMs)}</div><div class="label">Total perfect-form time</div></div>
       <div class="card"><div class="value">${fmtMinSec(bestStreakEver)}</div><div class="label">Best streak ever</div></div>
       <div class="card"><div class="value">${avgPerfectPct}%</div><div class="label">Avg. form accuracy</div></div>
@@ -138,7 +207,7 @@ function render() {
     </div>
     <div class="charts">
       <div class="chart-card">
-        <h2>Plank time vs. perfect-form time per day</h2>
+        <h2>Time held vs. perfect-form time per day</h2>
         <canvas id="timeChart" height="100"></canvas>
       </div>
       <div class="chart-card">
@@ -152,11 +221,11 @@ function render() {
     </div>
   `;
 
-  const labels = keys.map(fmtDateLabel);
-  const plankSec = keys.map((k) => +(log[k].plankMs / 1000).toFixed(1));
-  const goodSec = keys.map((k) => +(log[k].goodMs / 1000).toFixed(1));
-  const accuracyPct = keys.map((k) => (log[k].plankMs > 0 ? Math.round((log[k].goodMs / log[k].plankMs) * 100) : 0));
-  const streakSec = keys.map((k) => +(log[k].bestStreakMs / 1000).toFixed(1));
+  const labels = series.map((e) => fmtDateLabel(e.date));
+  const plankSec = series.map((e) => +(e.plankMs / 1000).toFixed(1));
+  const goodSec = series.map((e) => +(e.goodMs / 1000).toFixed(1));
+  const accuracyPct = series.map((e) => (e.plankMs > 0 ? Math.round((e.goodMs / e.plankMs) * 100) : 0));
+  const streakSec = series.map((e) => +(e.bestStreakMs / 1000).toFixed(1));
 
   const gridColor = "rgba(255,255,255,0.06)";
   const tickColor = "#9aa0ab";
@@ -233,6 +302,7 @@ function render() {
   });
 }
 
+exerciseSelect.addEventListener("change", render);
 render();
 window.addEventListener("storage", render);
 </script>

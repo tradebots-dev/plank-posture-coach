@@ -16,6 +16,31 @@
     padding: 16px;
   }
   h1 { font-size: 20px; margin: 8px 0 12px; }
+  #exerciseTabs {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: 720px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    margin-bottom: 10px;
+  }
+  #exerciseTabs button {
+    margin-top: 0;
+    flex: 0 0 auto;
+    background: #1c1c1c;
+    color: #ccc;
+    border: 1px solid #333;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  #exerciseTabs button.active {
+    background: #3a73e0;
+    color: white;
+    border-color: #3a73e0;
+  }
   #stage {
     position: relative;
     width: 100%;
@@ -95,6 +120,7 @@
 
   @media (max-width: 600px) {
     h1 { font-size: 26px; }
+    #exerciseTabs button { font-size: 15px; padding: 10px 16px; }
     #howItWorks { font-size: 16px; }
     #status { font-size: 24px; }
     #tip { font-size: 17px; }
@@ -104,17 +130,14 @@
     #telegramSection .hint { font-size: 14px; }
     #telegramSection input { font-size: 16px; padding: 12px; }
     #telegramSection h2, #logSection h2 { font-size: 19px; }
-    #logTable { font-size: 15px; }
+    #logTable { font-size: 14px; }
   }
 </style>
 </head>
 <body>
-  <h1>Plank Posture Coach</h1>
-  <p id="howItWorks">
-    Stand <b>sideways</b> to the camera in your plank. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles form one straight line.
-    <b style="color:#ff8b8b">Hips sagging</b>: your lower back is dipping below that line &mdash; lift your hips and brace your core.
-    <b style="color:#ff8b8b">Hips too high</b>: you're piking up &mdash; lower your hips back in line.
-  </p>
+  <h1>Posture Coach</h1>
+  <div id="exerciseTabs"></div>
+  <p id="howItWorks"></p>
   <div id="stage">
     <video id="video" playsinline autoplay muted></video>
     <canvas id="overlay"></canvas>
@@ -147,8 +170,8 @@
   <div id="logSection">
     <h2>Daily Log</h2>
     <table id="logTable">
-      <thead><tr><th>Date</th><th>Total Plank Time</th><th>Perfect-Form Time</th><th>Best Streak</th><th>Sessions</th></tr></thead>
-      <tbody><tr><td colspan="5">No sessions logged yet.</td></tr></tbody>
+      <thead><tr><th>Date</th><th>Exercise</th><th>Total Time</th><th>Perfect-Form Time</th><th>Best Streak</th><th>Sessions</th></tr></thead>
+      <tbody><tr><td colspan="6">No sessions logged yet.</td></tr></tbody>
     </table>
   </div>
 
@@ -168,11 +191,178 @@ const switchCameraBtn = document.getElementById("switchCameraBtn");
 const exportBtn = document.getElementById("exportBtn");
 const audioToggle = document.getElementById("audioToggle");
 const logTableBody = document.querySelector("#logTable tbody");
+const tabsEl = document.getElementById("exerciseTabs");
+const howItWorksEl = document.getElementById("howItWorks");
 const telegramTokenInput = document.getElementById("telegramToken");
 const telegramChatIdInput = document.getElementById("telegramChatId");
 const saveTelegramBtn = document.getElementById("saveTelegramBtn");
 const testTelegramBtn = document.getElementById("testTelegramBtn");
 const telegramStatusEl = document.getElementById("telegramStatus");
+
+// ---------------------------------------------------------------------------
+// Exercise definitions. Two detector "types":
+//  - "line": checks that three joints (near -> mid -> far) form a straight line
+//            while roughly horizontal. Used for static holds: Plank, Push-up,
+//            Side Plank, Glute Bridge.
+//  - "angle": checks the hip-knee-ankle bend angle plus torso lean. Used for
+//            Squat and Lunge.
+// ---------------------------------------------------------------------------
+const EXERCISES = [
+  {
+    id: "plank",
+    label: "Plank",
+    type: "line",
+    near: "shoulder", mid: "hip", far: "ankle",
+    horizontalMax: 40,
+    slopeThreshold: 0.045,
+    instructions:
+      'Stand <b>sideways</b> to the camera in your plank. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles form one straight line. ' +
+      '<b style="color:#ff8b8b">Hips sagging</b>: lower back dipping below that line &mdash; lift your hips. <b style="color:#ff8b8b">Hips too high</b>: piking up &mdash; lower your hips.',
+    notActiveStatus: "Get into plank position",
+    notActiveTip: "Body should be roughly horizontal, shoulder to ankle, viewed from the side.",
+    goodStatus: "Good form — body is straight",
+    goodMsg: "Keep your core braced and breathe steadily.",
+    sagStatus: "Hips sagging",
+    sagMsg: "Lift your hips and squeeze your glutes/core — your lower back is dipping.",
+    sagSpeech: "Lift your hips. Your lower back is sagging.",
+    highStatus: "Hips too high",
+    highMsg: "Lower your hips so shoulders, hips, and ankles form one straight line.",
+    highSpeech: "Lower your hips. You're piking up too much."
+  },
+  {
+    id: "pushup",
+    label: "Push-up",
+    type: "line",
+    near: "shoulder", mid: "hip", far: "ankle",
+    horizontalMax: 40,
+    slopeThreshold: 0.05,
+    instructions:
+      'Side-view, hands under shoulders. <b style="color:#7fdc9a">Good form</b>: shoulders, hips, and ankles stay in one straight line throughout the rep, like a moving plank. ' +
+      '<b style="color:#ff8b8b">Hips sagging</b> or <b style="color:#ff8b8b">piking</b> are the same corrections as a plank.',
+    notActiveStatus: "Get into push-up position",
+    notActiveTip: "Hands under shoulders, body roughly horizontal, viewed from the side.",
+    goodStatus: "Good form — straight body line",
+    goodMsg: "Great alignment — control the rep up and down.",
+    sagStatus: "Hips sagging",
+    sagMsg: "Don't let your hips drop — brace your core through the rep.",
+    sagSpeech: "Hips are dropping. Keep your body in a straight line.",
+    highStatus: "Hips too high",
+    highMsg: "Lower your hips — you're piking up during the push-up.",
+    highSpeech: "Lower your hips. Don't pike during the push-up."
+  },
+  {
+    id: "sideplank",
+    label: "Side Plank",
+    type: "line",
+    near: "shoulder", mid: "hip", far: "ankle",
+    horizontalMax: 40,
+    slopeThreshold: 0.045,
+    instructions:
+      'Lie on your side, propped on your forearm, facing the camera. <b style="color:#7fdc9a">Good form</b>: shoulder, hip, and ankle form one straight diagonal line. ' +
+      '<b style="color:#ff8b8b">Sagging</b> or <b style="color:#ff8b8b">piking</b> hips are the same corrections as a regular plank.',
+    notActiveStatus: "Get into side plank position",
+    notActiveTip: "Lie on your side, propped on your forearm, body roughly in one line.",
+    goodStatus: "Good form — straight line",
+    goodMsg: "Solid side plank — keep breathing and stay braced.",
+    sagStatus: "Hips sagging",
+    sagMsg: "Lift your hips — don't let them drop toward the floor.",
+    sagSpeech: "Lift your hips. They're dropping.",
+    highStatus: "Hips too high",
+    highMsg: "Lower your hips slightly — you're piking up too much.",
+    highSpeech: "Lower your hips a little."
+  },
+  {
+    id: "glutebridge",
+    label: "Glute Bridge",
+    type: "line",
+    near: "shoulder", mid: "hip", far: "knee",
+    horizontalMax: 45,
+    slopeThreshold: 0.05,
+    instructions:
+      'Lie on your back, knees bent, feet flat, camera to your side. At the top, <b style="color:#7fdc9a">good form</b>: shoulder, hip, and knee form one straight line. ' +
+      '<b style="color:#ff8b8b">Hips too low</b>: lift higher. <b style="color:#ff8b8b">Hips too high</b>: you\'re overarching your lower back.',
+    notActiveStatus: "Get into glute bridge position",
+    notActiveTip: "Lie on your back, knees bent, hips lifted, viewed from the side.",
+    goodStatus: "Good form — straight line",
+    goodMsg: "Great bridge position — squeeze and hold.",
+    sagStatus: "Hips too low",
+    sagMsg: "Lift your hips higher — squeeze your glutes at the top.",
+    sagSpeech: "Lift your hips higher.",
+    highStatus: "Hips overextended",
+    highMsg: "Don't push your hips up past a straight line — you're overarching.",
+    highSpeech: "Don't overextend your hips."
+  },
+  {
+    id: "squat",
+    label: "Squat",
+    type: "angle",
+    standingThreshold: 150,
+    goodMax: 110,
+    maxLean: 45,
+    instructions:
+      'Stand <b>sideways</b> to the camera, bend your knees into a squat. <b style="color:#7fdc9a">Good form</b>: thighs reach about parallel to the floor (knee angle ~90&ndash;110&deg;) with your chest up. ' +
+      'Leaning too far forward means your back is rounding.',
+    notActiveStatus: "Stand and begin your squat",
+    notActiveTip: "Bend your knees to lower into a squat; viewed from the side.",
+    goodStatus: "Good squat depth",
+    goodMsg: "Great depth — drive through your heels back up.",
+    leanStatus: "Leaning too far forward",
+    leanMsg: "Keep your chest up and torso more upright.",
+    leanSpeech: "You're leaning too far forward. Keep your chest up.",
+    shallowStatus: "Too shallow",
+    shallowMsg: "Go a bit lower for full squat depth.",
+    shallowSpeech: "Go lower for full depth."
+  },
+  {
+    id: "lunge",
+    label: "Lunge",
+    type: "angle",
+    standingThreshold: 150,
+    goodMax: 110,
+    maxLean: 45,
+    instructions:
+      'Step into a lunge, sideways to the camera, leading with the leg facing the camera. <b style="color:#7fdc9a">Good form</b>: front knee bends to about 90&deg; with your chest upright. ' +
+      'Avoid leaning too far forward.',
+    notActiveStatus: "Step into your lunge",
+    notActiveTip: "Bend your front knee, viewed from the side.",
+    goodStatus: "Good lunge depth",
+    goodMsg: "Good depth — keep your front knee tracking over your foot.",
+    leanStatus: "Leaning too far forward",
+    leanMsg: "Keep your torso upright — don't lean forward into the lunge.",
+    leanSpeech: "Keep your torso upright.",
+    shallowStatus: "Too shallow",
+    shallowMsg: "Bend your front knee more for full lunge depth.",
+    shallowSpeech: "Bend your front knee more."
+  }
+];
+
+let currentExerciseIndex = 0;
+
+function renderTabs() {
+  tabsEl.innerHTML = EXERCISES.map((ex, i) => `<button type="button" data-i="${i}" class="${i === currentExerciseIndex ? "active" : ""}">${ex.label}</button>`).join("");
+  tabsEl.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => switchExercise(Number(btn.dataset.i)));
+  });
+}
+
+function applyExerciseUi() {
+  const cfg = EXERCISES[currentExerciseIndex];
+  howItWorksEl.innerHTML = cfg.instructions;
+  if (stopBtn.disabled) {
+    // Only overwrite the idle status text; if a session is running, leave the live readout alone.
+    statusEl.textContent = poseLandmarker ? "Model ready. Click Start Camera." : "Loading pose model...";
+    tipEl.textContent = cfg.notActiveTip;
+    panelEl.className = "neutral";
+  }
+  renderTabs();
+}
+
+function switchExercise(index) {
+  if (index === currentExerciseIndex) return;
+  if (!stopBtn.disabled) stopSession();
+  currentExerciseIndex = index;
+  applyExerciseUi();
+}
 
 const TELEGRAM_TOKEN_KEY = "plankTelegramToken";
 const TELEGRAM_CHATID_KEY = "plankTelegramChatId";
@@ -213,7 +403,7 @@ testTelegramBtn.addEventListener("click", async () => {
   telegramStatusEl.textContent = "Sending test message...";
   saveTelegramBtn.click();
   const result = await sendTelegramMessage(
-    `🏋️ <b>Fitness by PAI</b>\nTest message — your Plank Posture Coach is connected!\nDashboard: ${DASHBOARD_URL}`
+    `🏋️ <b>Fitness by PAI</b>\nTest message — your Posture Coach is connected!\nDashboard: ${DASHBOARD_URL}`
   );
   telegramStatusEl.textContent = result.ok ? "Test message sent! Check Telegram." : `Failed: ${result.error}`;
 });
@@ -243,15 +433,13 @@ function maybeSpeak(key, text, now) {
   }
 }
 
-const HIP_SLOPE_THRESHOLD = 0.045; // fraction of body length; tune for sensitivity
-const HORIZONTAL_MAX_ANGLE = 40; // degrees from horizontal to count as "in plank"
 const LOG_KEY = "plankPostureLog";
 
 let poseLandmarker;
 let goodStreakStart = null;
 let bestStreakMs = 0;
 let lastFrameTime = null;
-let sessionPlankMs = 0;   // total time held in a plank position this session (good or bad form)
+let sessionPlankMs = 0;   // total time held in-position this session (good or bad form)
 let sessionGoodMs = 0;    // total time held with correct ("good") form this session
 let lastSavedPlankMs = 0; // portion of sessionPlankMs already flushed to the daily log
 let lastSavedGoodMs = 0;  // portion of sessionGoodMs already flushed to the daily log
@@ -263,11 +451,20 @@ function todayKey() {
 }
 
 function loadLog() {
+  let log;
   try {
-    return JSON.parse(localStorage.getItem(LOG_KEY)) || {};
+    log = JSON.parse(localStorage.getItem(LOG_KEY)) || {};
   } catch {
-    return {};
+    log = {};
   }
+  // Migrate old flat per-day format ({plankMs,...}) to the new per-exercise nested format
+  // ({plank: {plankMs,...}}) so previously-saved plank sessions keep showing up.
+  for (const dateKey of Object.keys(log)) {
+    if (typeof log[dateKey].plankMs === "number") {
+      log[dateKey] = { plank: log[dateKey] };
+    }
+  }
+  return log;
 }
 
 function saveLog(log) {
@@ -285,31 +482,45 @@ function flushSessionToLog(sessionEnded) {
   const deltaPlank = Math.max(0, sessionPlankMs - lastSavedPlankMs);
   const deltaGood = Math.max(0, sessionGoodMs - lastSavedGoodMs);
   if (deltaPlank === 0 && deltaGood === 0 && !sessionEnded) return;
+  const exerciseId = EXERCISES[currentExerciseIndex].id;
   const log = loadLog();
-  const key = todayKey();
-  const entry = log[key] || { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
+  const dateKey = todayKey();
+  const dayLog = log[dateKey] || {};
+  const entry = dayLog[exerciseId] || { plankMs: 0, goodMs: 0, bestStreakMs: 0, sessions: 0 };
   entry.plankMs += deltaPlank;
   entry.goodMs += deltaGood;
   entry.bestStreakMs = Math.max(entry.bestStreakMs, bestStreakMs);
   if (sessionEnded) entry.sessions += 1;
-  log[key] = entry;
+  dayLog[exerciseId] = entry;
+  log[dateKey] = dayLog;
   saveLog(log);
   lastSavedPlankMs = sessionPlankMs;
   lastSavedGoodMs = sessionGoodMs;
   renderLog();
 }
 
+function exerciseLabel(id) {
+  return EXERCISES.find((e) => e.id === id)?.label || id;
+}
+
 function renderLog() {
   const log = loadLog();
-  const keys = Object.keys(log).sort().reverse().slice(0, 14);
-  logTableBody.innerHTML = keys.length
-    ? keys
-        .map((key) => {
-          const e = log[key];
-          return `<tr><td>${key}</td><td>${formatDuration(e.plankMs)}</td><td>${formatDuration(e.goodMs)}</td><td>${formatDuration(e.bestStreakMs)}</td><td>${e.sessions}</td></tr>`;
-        })
+  const rows = [];
+  for (const dateKey of Object.keys(log)) {
+    for (const exId of Object.keys(log[dateKey])) {
+      rows.push({ date: dateKey, exercise: exId, ...log[dateKey][exId] });
+    }
+  }
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const top = rows.slice(0, 20);
+  logTableBody.innerHTML = top.length
+    ? top
+        .map(
+          (r) =>
+            `<tr><td>${r.date}</td><td>${exerciseLabel(r.exercise)}</td><td>${formatDuration(r.plankMs)}</td><td>${formatDuration(r.goodMs)}</td><td>${formatDuration(r.bestStreakMs)}</td><td>${r.sessions}</td></tr>`
+        )
         .join("")
-    : `<tr><td colspan="5">No sessions logged yet.</td></tr>`;
+    : `<tr><td colspan="6">No sessions logged yet.</td></tr>`;
 }
 
 async function init() {
@@ -396,11 +607,12 @@ startBtn.addEventListener("click", async () => {
   }
 });
 
-stopBtn.addEventListener("click", () => {
+function stopSession() {
   if (flushIntervalId) {
     clearInterval(flushIntervalId);
     flushIntervalId = null;
   }
+  const cfg = EXERCISES[currentExerciseIndex];
   const thisSessionPlankMs = sessionPlankMs;
   const thisSessionGoodMs = sessionGoodMs;
   const thisSessionBestStreakMs = bestStreakMs;
@@ -412,38 +624,45 @@ stopBtn.addEventListener("click", () => {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   switchCameraBtn.disabled = true;
-  setPanel("neutral", "Session saved", "Click Start Camera to begin a new plank session.");
+  setPanel("neutral", "Session saved", "Click Start Camera to begin a new session.");
   statsEl.textContent = "";
 
   if (thisSessionPlankMs > 0) {
-    const todayEntry = loadLog()[todayKey()] || { plankMs: 0, goodMs: 0, sessions: 0 };
+    const todayEntry = (loadLog()[todayKey()] || {})[cfg.id] || { plankMs: 0, goodMs: 0, sessions: 0 };
     const accuracy = thisSessionPlankMs > 0 ? Math.round((thisSessionGoodMs / thisSessionPlankMs) * 100) : 0;
     const message =
-      `🏋️ <b>Fitness by PAI — Plank session complete!</b>\n` +
+      `🏋️ <b>Fitness by PAI — ${cfg.label} session complete!</b>\n` +
       `This session: held ${formatDuration(thisSessionPlankMs)}, perfect form for ${formatDuration(thisSessionGoodMs)} (${accuracy}%), best streak ${formatDuration(thisSessionBestStreakMs)}.\n` +
-      `Today's total: ${formatDuration(todayEntry.plankMs)} plank time, ${formatDuration(todayEntry.goodMs)} perfect form, ${todayEntry.sessions} session(s).\n` +
+      `Today's ${cfg.label} total: ${formatDuration(todayEntry.plankMs)} time, ${formatDuration(todayEntry.goodMs)} perfect form, ${todayEntry.sessions} session(s).\n` +
       `View your dashboard: ${DASHBOARD_URL}`;
     sendTelegramMessage(message).then((result) => {
       if (!result.ok && result.error) console.warn("Telegram send failed:", result.error);
     });
   }
-});
+}
+
+stopBtn.addEventListener("click", stopSession);
 
 window.addEventListener("beforeunload", () => flushSessionToLog(false));
 
 exportBtn.addEventListener("click", () => {
   const log = loadLog();
-  const keys = Object.keys(log).sort();
-  const rows = ["date,plank_seconds,perfect_form_seconds,best_streak_seconds,sessions"];
-  for (const key of keys) {
-    const e = log[key];
-    rows.push(`${key},${(e.plankMs / 1000).toFixed(1)},${(e.goodMs / 1000).toFixed(1)},${(e.bestStreakMs / 1000).toFixed(1)},${e.sessions}`);
+  const rows = [];
+  for (const dateKey of Object.keys(log).sort()) {
+    for (const exId of Object.keys(log[dateKey])) {
+      const e = log[dateKey][exId];
+      rows.push({ date: dateKey, exercise: exId, ...e });
+    }
   }
-  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const lines = ["date,exercise,total_seconds,perfect_form_seconds,best_streak_seconds,sessions"];
+  for (const r of rows) {
+    lines.push(`${r.date},${exerciseLabel(r.exercise)},${(r.plankMs / 1000).toFixed(1)},${(r.goodMs / 1000).toFixed(1)},${(r.bestStreakMs / 1000).toFixed(1)},${r.sessions}`);
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "plank_posture_log.csv";
+  a.download = "posture_coach_log.csv";
   a.click();
   URL.revokeObjectURL(url);
 });
@@ -491,6 +710,48 @@ function setPanel(mode, status, tip) {
   tipEl.textContent = tip;
 }
 
+// Evaluates the current exercise's rule against this frame's joints.
+// Returns { active, mode, status, tip, speechKey, speechText, angleLabel, angleValue }.
+function evaluateExercise(cfg, j) {
+  if (cfg.type === "line") {
+    const near = j[cfg.near], mid = j[cfg.mid], far = j[cfg.far];
+    const dx = far.x - near.x, dy = far.y - near.y;
+    const angleFromHorizontal = (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
+    if (angleFromHorizontal > cfg.horizontalMax) {
+      return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+    }
+    const t = dx !== 0 ? (mid.x - near.x) / dx : 0.5;
+    const expectedMidY = near.y + t * dy;
+    const bodyLength = Math.hypot(dx, dy) || 1;
+    const deviation = (mid.y - expectedMidY) / bodyLength;
+    const lineAngle = angleAt(near, mid, far);
+    if (Math.abs(deviation) <= cfg.slopeThreshold) {
+      return { active: true, mode: "good", status: cfg.goodStatus, tip: cfg.goodMsg, angleLabel: "Line angle", angleValue: lineAngle };
+    } else if (deviation > cfg.slopeThreshold) {
+      return { active: true, mode: "bad", status: cfg.sagStatus, tip: cfg.sagMsg, speechKey: "sag", speechText: cfg.sagSpeech, angleLabel: "Line angle", angleValue: lineAngle };
+    } else {
+      return { active: true, mode: "bad", status: cfg.highStatus, tip: cfg.highMsg, speechKey: "high", speechText: cfg.highSpeech, angleLabel: "Line angle", angleValue: lineAngle };
+    }
+  }
+
+  // "angle" type: squat / lunge
+  const { shoulder, hip, knee, ankle } = j;
+  if (!knee) return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+  const kneeAngle = angleAt(hip, knee, ankle);
+  if (kneeAngle === null || kneeAngle > cfg.standingThreshold) {
+    return { active: false, status: cfg.notActiveStatus, tip: cfg.notActiveTip };
+  }
+  const torsoDx = shoulder.x - hip.x, torsoDy = shoulder.y - hip.y;
+  const torsoAngleFromVertical = (Math.atan2(Math.abs(torsoDx), Math.abs(torsoDy)) * 180) / Math.PI;
+  if (torsoAngleFromVertical > cfg.maxLean) {
+    return { active: true, mode: "bad", status: cfg.leanStatus, tip: cfg.leanMsg, speechKey: "lean", speechText: cfg.leanSpeech, angleLabel: "Knee angle", angleValue: kneeAngle };
+  }
+  if (kneeAngle <= cfg.goodMax) {
+    return { active: true, mode: "good", status: cfg.goodStatus, tip: cfg.goodMsg, angleLabel: "Knee angle", angleValue: kneeAngle };
+  }
+  return { active: true, mode: "bad", status: cfg.shallowStatus, tip: cfg.shallowMsg, speechKey: "shallow", speechText: cfg.shallowSpeech, angleLabel: "Knee angle", angleValue: kneeAngle };
+}
+
 function loop() {
   const now = performance.now();
   if (lastFrameTime === null) lastFrameTime = now;
@@ -514,7 +775,8 @@ function loop() {
   drawer.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color: "#888", lineWidth: 2 });
   drawer.drawLandmarks(lm, { color: "#fff", radius: 3 });
 
-  const { shoulder, elbow, wrist, hip, knee, ankle, ear, visSum } = pickSide(lm);
+  const joints = pickSide(lm);
+  const { shoulder, elbow, wrist, hip, knee, ankle, ear, visSum } = joints;
 
   drawJointLabel(ctx, ear, "Ear", canvas.width, canvas.height);
   drawJointLabel(ctx, shoulder, "Shoulder", canvas.width, canvas.height);
@@ -533,13 +795,11 @@ function loop() {
     return;
   }
 
-  // Is the body roughly horizontal (i.e. actually in a plank, not standing/sitting)?
-  const dx = ankle.x - shoulder.x;
-  const dy = ankle.y - shoulder.y;
-  const bodyAngleFromHorizontal = (Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI;
+  const cfg = EXERCISES[currentExerciseIndex];
+  const r = evaluateExercise(cfg, joints);
 
-  if (bodyAngleFromHorizontal > HORIZONTAL_MAX_ANGLE) {
-    setPanel("neutral", "Get into plank position", "Body should be roughly horizontal, shoulder to ankle, viewed from the side.");
+  if (!r.active) {
+    setPanel("neutral", r.status, r.tip);
     statsEl.textContent = "";
     goodStreakStart = null;
     ctx.restore();
@@ -547,29 +807,18 @@ function loop() {
     return;
   }
 
-  // Body is roughly horizontal, so this counts as actively holding a plank.
   sessionPlankMs += deltaMs;
 
-  // Expected hip height if shoulder-hip-ankle were a straight line, vs actual.
-  const t = dx !== 0 ? (hip.x - shoulder.x) / dx : 0.5;
-  const expectedHipY = shoulder.y + t * dy;
-  const bodyLength = Math.hypot(dx, dy) || 1;
-  const hipDeviation = (hip.y - expectedHipY) / bodyLength; // positive = hip below line (sagging)
-
-  const hipAngle = angleAt(shoulder, hip, ankle);
   let neckNote = "";
-  if (ear && elbow) {
+  if (ear) {
     const neckAngle = angleAt(ear, shoulder, hip);
     if (neckAngle !== null && neckAngle < 150) {
-      neckNote = " Also lift your head slightly so your neck is in line with your spine.";
+      neckNote = " Also keep your neck in line with your spine.";
     }
   }
+  const tip = r.tip + neckNote;
 
-  let mode, status, tip;
-  if (Math.abs(hipDeviation) <= HIP_SLOPE_THRESHOLD) {
-    mode = "good";
-    status = "Good form — body is straight";
-    tip = "Keep your core braced and breathe steadily." + neckNote;
+  if (r.mode === "good") {
     if (goodStreakStart === null) {
       goodStreakStart = now;
       nextGoodAnnounceMs = GOOD_ANNOUNCE_MS;
@@ -582,18 +831,9 @@ function loop() {
       speak(`Perfect form for ${Math.round(nextGoodAnnounceMs / 1000)} seconds. Keep it up.`);
       nextGoodAnnounceMs += GOOD_ANNOUNCE_MS;
     }
-  } else if (hipDeviation > HIP_SLOPE_THRESHOLD) {
-    mode = "bad";
-    status = "Hips sagging";
-    tip = "Lift your hips and squeeze your glutes/core — your lower back is dipping." + neckNote;
-    goodStreakStart = null;
-    maybeSpeak("sagging", "Lift your hips. Your lower back is sagging.", now);
   } else {
-    mode = "bad";
-    status = "Hips too high";
-    tip = "Lower your hips so shoulders, hips, and ankles form one straight line." + neckNote;
     goodStreakStart = null;
-    maybeSpeak("too_high", "Lower your hips. You're piking up too much.", now);
+    maybeSpeak(r.speechKey, r.speechText, now);
   }
 
   if (goodStreakStart !== null) {
@@ -601,16 +841,17 @@ function loop() {
     bestStreakMs = Math.max(bestStreakMs, streakMs);
   }
 
-  setPanel(mode, status, tip);
+  setPanel(r.mode, r.status, tip);
   const currentStreak = goodStreakStart ? ((now - goodStreakStart) / 1000).toFixed(1) : "0.0";
   statsEl.textContent =
-    `Hip angle: ${hipAngle ? hipAngle.toFixed(0) : "--"}°  |  Current good-form streak: ${currentStreak}s  |  Best streak: ${(bestStreakMs / 1000).toFixed(1)}s\n` +
-    `Total plank time held: ${formatDuration(sessionPlankMs)}  |  Total perfect-form time: ${formatDuration(sessionGoodMs)}`;
+    `${r.angleLabel}: ${r.angleValue ? r.angleValue.toFixed(0) : "--"}°  |  Current good-form streak: ${currentStreak}s  |  Best streak: ${(bestStreakMs / 1000).toFixed(1)}s\n` +
+    `Total time held: ${formatDuration(sessionPlankMs)}  |  Total perfect-form time: ${formatDuration(sessionGoodMs)}`;
 
   ctx.restore();
   requestAnimationFrame(loop);
 }
 
+applyExerciseUi();
 init();
 renderLog();
 </script>
