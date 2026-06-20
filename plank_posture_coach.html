@@ -79,6 +79,7 @@
     cursor: pointer;
   }
   button:disabled { background: #444; cursor: not-allowed; }
+  #pushupModeBtn.active { background: #d98f00; }
   #controls { display: flex; gap: 10px; width: 100%; max-width: 720px; flex-wrap: wrap; align-items: center; }
   #controls a { text-decoration: none; }
   #audioToggleLabel { font-size: 13px; color: #eee; display: flex; align-items: center; gap: 6px; margin-left: 4px; }
@@ -118,6 +119,7 @@
     <button id="startBtn">Start Camera</button>
     <button id="stopBtn" disabled>Stop &amp; Save</button>
     <button id="switchCameraBtn" disabled>Switch Camera</button>
+    <button id="pushupModeBtn" type="button">Push-up Mode: Off</button>
     <button id="exportBtn">Export CSV</button>
     <a id="dashboardLink" href="dashboard.html" target="_blank"><button type="button">View Dashboard</button></a>
     <label id="audioToggleLabel"><input type="checkbox" id="audioToggle" checked> Audio cues</label>
@@ -143,10 +145,18 @@ const panelEl = document.getElementById("panel");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const switchCameraBtn = document.getElementById("switchCameraBtn");
+const pushupModeBtn = document.getElementById("pushupModeBtn");
 const exportBtn = document.getElementById("exportBtn");
 const audioToggle = document.getElementById("audioToggle");
 const logTableBody = document.querySelector("#logTable tbody");
 const detectedLabelEl = document.getElementById("detectedLabel");
+
+let pushupModeActive = false;
+pushupModeBtn.addEventListener("click", () => {
+  pushupModeActive = !pushupModeActive;
+  pushupModeBtn.textContent = `Push-up Mode: ${pushupModeActive ? "On" : "Off"}`;
+  pushupModeBtn.classList.toggle("active", pushupModeActive);
+});
 
 // ---------------------------------------------------------------------------
 // Exercise rule definitions (used for both auto-detection and form scoring).
@@ -668,8 +678,8 @@ const WALL_SIT_HOLD_MS = 2500;
 // from pose geometry alone (body orientation, knee bend, shoulder rotation, stance
 // width, hold duration). Returns an exercise id, or null if no recognizable position
 // is held yet.
-function detectPostureId(lm, j, now) {
-  const { shoulder, elbow, wrist, hip, knee, ankle } = j;
+function detectPostureId(lm, j, now, forcePushup) {
+  const { shoulder, hip, knee, ankle } = j;
   if (!shoulder || !hip || !ankle) return null;
 
   const dx = ankle.x - shoulder.x, dy = ankle.y - shoulder.y;
@@ -677,7 +687,13 @@ function detectPostureId(lm, j, now) {
   const bodyScale = Math.hypot(dx, dy) || 1;
 
   if (bodyAngleFromHorizontal <= 50) {
-    // Lying down: plank, push-up, side plank, or glute bridge.
+    // Push-up Mode is a manual override — when it's on, any horizontal hold is a push-up,
+    // skipping the plank/side-plank/glute-bridge sub-classification entirely.
+    if (forcePushup) return "pushup";
+
+    // Lying down: plank, side plank, or glute bridge. (Push-up is intentionally not
+    // auto-detected — distinguishing it from a static plank via elbow angle alone was
+    // unreliable for a forearm plank. Use the Push-up Mode toggle instead.)
     const ls = lm[11], rs = lm[12];
     const shoulderYDiff = Math.abs((ls?.y ?? 0) - (rs?.y ?? 0));
     if (shoulderYDiff / bodyScale > 0.22) return "sideplank";
@@ -685,8 +701,6 @@ function detectPostureId(lm, j, now) {
     const kneeBend = knee ? angleAt(hip, knee, ankle) : null;
     if (kneeBend !== null && kneeBend < 140) return "glutebridge";
 
-    const elbowAngle = elbow && wrist ? angleAt(shoulder, elbow, wrist) : null;
-    if (elbowAngle !== null && elbowAngle < 150) return "pushup";
     return "plank";
   }
 
@@ -823,7 +837,7 @@ function loop() {
     return;
   }
 
-  const rawId = detectPostureId(lm, joints, now);
+  const rawId = detectPostureId(lm, joints, now, pushupModeActive);
   if (rawId !== candidateId) {
     candidateId = rawId;
     candidateSince = now;
