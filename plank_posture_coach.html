@@ -73,6 +73,19 @@
     opacity: 0.85;
     margin: 0 0 12px;
   }
+  #telegramSection { width: 100%; max-width: 720px; margin-top: 24px; }
+  #telegramSection h2 { font-size: 16px; margin-bottom: 6px; }
+  #telegramSection .hint { font-size: 12px; opacity: 0.65; margin: 4px 0 10px; line-height: 1.4; }
+  #telegramSection .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  #telegramSection input {
+    flex: 1 1 160px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #1c1c1c;
+    color: #eee;
+    font-size: 13px;
+  }
   #logSection { width: 100%; max-width: 720px; margin-top: 24px; }
   #logSection h2 { font-size: 16px; margin-bottom: 8px; }
   #logTable { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -105,6 +118,17 @@
     <a id="dashboardLink" href="dashboard.html" target="_blank"><button type="button">View Dashboard</button></a>
     <label id="audioToggleLabel"><input type="checkbox" id="audioToggle" checked> Audio cues</label>
   </div>
+  <div id="telegramSection">
+    <h2>Telegram Notifications</h2>
+    <p class="hint">Get a message with your session summary and a dashboard link sent to "Fitness by PAI" on Telegram after each session. Your token and chat ID are saved only in this browser, never uploaded anywhere.</p>
+    <div class="row">
+      <input id="telegramToken" type="text" placeholder="Bot token (from @BotFather)">
+      <input id="telegramChatId" type="text" placeholder="Chat ID">
+      <button id="saveTelegramBtn" type="button">Save</button>
+      <button id="testTelegramBtn" type="button">Send Test</button>
+    </div>
+    <div id="telegramStatus" class="hint"></div>
+  </div>
   <div id="logSection">
     <h2>Daily Log</h2>
     <table id="logTable">
@@ -129,6 +153,55 @@ const switchCameraBtn = document.getElementById("switchCameraBtn");
 const exportBtn = document.getElementById("exportBtn");
 const audioToggle = document.getElementById("audioToggle");
 const logTableBody = document.querySelector("#logTable tbody");
+const telegramTokenInput = document.getElementById("telegramToken");
+const telegramChatIdInput = document.getElementById("telegramChatId");
+const saveTelegramBtn = document.getElementById("saveTelegramBtn");
+const testTelegramBtn = document.getElementById("testTelegramBtn");
+const telegramStatusEl = document.getElementById("telegramStatus");
+
+const TELEGRAM_TOKEN_KEY = "plankTelegramToken";
+const TELEGRAM_CHATID_KEY = "plankTelegramChatId";
+const DASHBOARD_URL = new URL("dashboard.html", location.href).toString();
+
+telegramTokenInput.value = localStorage.getItem(TELEGRAM_TOKEN_KEY) || "";
+telegramChatIdInput.value = localStorage.getItem(TELEGRAM_CHATID_KEY) || "";
+
+saveTelegramBtn.addEventListener("click", () => {
+  localStorage.setItem(TELEGRAM_TOKEN_KEY, telegramTokenInput.value.trim());
+  localStorage.setItem(TELEGRAM_CHATID_KEY, telegramChatIdInput.value.trim());
+  telegramStatusEl.textContent = "Saved.";
+});
+
+async function sendTelegramMessage(text) {
+  const token = localStorage.getItem(TELEGRAM_TOKEN_KEY);
+  const chatId = localStorage.getItem(TELEGRAM_CHATID_KEY);
+  if (!token || !chatId) return { ok: false, error: "Telegram token/chat ID not set." };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        disable_web_page_preview: false
+      })
+    });
+    const data = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.description };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+testTelegramBtn.addEventListener("click", async () => {
+  telegramStatusEl.textContent = "Sending test message...";
+  saveTelegramBtn.click();
+  const result = await sendTelegramMessage(
+    `🏋️ <b>Fitness by PAI</b>\nTest message — your Plank Posture Coach is connected!\nDashboard: ${DASHBOARD_URL}`
+  );
+  telegramStatusEl.textContent = result.ok ? "Test message sent! Check Telegram." : `Failed: ${result.error}`;
+});
 
 const SPEAK_REPEAT_MS = 6000; // how often to repeat the same correction while it persists
 const GOOD_ANNOUNCE_MS = 15000; // how often to announce perfect-form hold time
@@ -313,6 +386,9 @@ stopBtn.addEventListener("click", () => {
     clearInterval(flushIntervalId);
     flushIntervalId = null;
   }
+  const thisSessionPlankMs = sessionPlankMs;
+  const thisSessionGoodMs = sessionGoodMs;
+  const thisSessionBestStreakMs = bestStreakMs;
   flushSessionToLog(true);
   const stream = video.srcObject;
   if (stream) stream.getTracks().forEach((track) => track.stop());
@@ -323,6 +399,19 @@ stopBtn.addEventListener("click", () => {
   switchCameraBtn.disabled = true;
   setPanel("neutral", "Session saved", "Click Start Camera to begin a new plank session.");
   statsEl.textContent = "";
+
+  if (thisSessionPlankMs > 0) {
+    const todayEntry = loadLog()[todayKey()] || { plankMs: 0, goodMs: 0, sessions: 0 };
+    const accuracy = thisSessionPlankMs > 0 ? Math.round((thisSessionGoodMs / thisSessionPlankMs) * 100) : 0;
+    const message =
+      `🏋️ <b>Fitness by PAI — Plank session complete!</b>\n` +
+      `This session: held ${formatDuration(thisSessionPlankMs)}, perfect form for ${formatDuration(thisSessionGoodMs)} (${accuracy}%), best streak ${formatDuration(thisSessionBestStreakMs)}.\n` +
+      `Today's total: ${formatDuration(todayEntry.plankMs)} plank time, ${formatDuration(todayEntry.goodMs)} perfect form, ${todayEntry.sessions} session(s).\n` +
+      `View your dashboard: ${DASHBOARD_URL}`;
+    sendTelegramMessage(message).then((result) => {
+      if (!result.ok && result.error) console.warn("Telegram send failed:", result.error);
+    });
+  }
 });
 
 window.addEventListener("beforeunload", () => flushSessionToLog(false));
